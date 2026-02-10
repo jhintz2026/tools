@@ -20,8 +20,10 @@
       "output": "release"
     },
     "files": [
-      "dist/**/*"
+      "dist/**/*",
+      "node_modules/**/*"
     ],
+    "asar": true,
     "win": {
       "target": ["nsis"],
       "icon": null

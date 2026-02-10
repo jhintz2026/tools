@@ -2,12 +2,19 @@ const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 
+// Externalize all node_modules for main/preload (they run in Node.js, no need to bundle)
+const nodeExternals = {};
+const nodeModules = require('fs').readdirSync(path.resolve(__dirname, 'node_modules'))
+  .filter(mod => mod !== '.package-lock.json')
+  .forEach(mod => { nodeExternals[mod] = `commonjs ${mod}`; });
+
 module.exports = [
   // Main process
   {
     mode: 'development',
     entry: './src/main/main.ts',
     target: 'electron-main',
+    externals: nodeExternals,
     module: {
       rules: [{
         test: /\.ts$/,
@@ -26,6 +33,7 @@ module.exports = [
     mode: 'development',
     entry: './src/main/preload.ts',
     target: 'electron-preload',
+    externals: nodeExternals,
     module: {
       rules: [{
         test: /\.ts$/,
