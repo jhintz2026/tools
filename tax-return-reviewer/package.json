@@ -1,0 +1,68 @@
+{
+  "name": "tax-return-reviewer",
+  "version": "1.0.0",
+  "description": "Comprehensive tax return review desktop application",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "webpack --config webpack.config.js",
+    "start": "npm run build && electron dist/main.js",
+    "dev": "concurrently \"webpack --watch --config webpack.config.js\" \"wait-on dist/main.js && electron dist/main.js\"",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.taxreturnreviewer.app",
+    "productName": "Tax Return Reviewer",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": null
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": null
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": null
+    }
+  },
+  "keywords": ["tax", "review", "accounting", "IRS", "1040"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "electron": "^40.2.1",
+    "lucide-react": "^0.563.0",
+    "pdf-parse": "^2.4.5",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.13.0",
+    "tesseract.js": "^7.0.0",
+    "typescript": "^5.9.3",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/pdf-parse": "^1.1.5",
+    "concurrently": "^9.2.1",
+    "copy-webpack-plugin": "^13.0.1",
+    "css-loader": "^7.1.3",
+    "electron-builder": "^26.7.0",
+    "html-webpack-plugin": "^5.6.6",
+    "style-loader": "^4.0.0",
+    "ts-loader": "^9.5.4",
+    "wait-on": "^9.0.3",
+    "webpack": "^5.105.1",
+    "webpack-cli": "^6.0.1",
+    "webpack-dev-server": "^5.2.3"
+  }
+}
