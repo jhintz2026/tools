@@ -8,18 +8,28 @@ import { ParsedDocument, TaxFormType, TaxFormData, IncomeItem, DeductionItem, Sc
  */
 export async function parsePDF(filePath: string): Promise<ParsedDocument> {
   const buffer = fs.readFileSync(filePath);
-  const data = new Uint8Array(buffer);
-  const parser: any = new PDFParse({ data });
-  await parser.load();
-  const pageCount = parser.doc?.numPages || 1;
+  const parser = new PDFParse({ data: new Uint8Array(buffer), verbosity: 0 });
   let text = '';
-  for (let i = 1; i <= pageCount; i++) {
+  let pageCount = 1;
+  try {
+    const result = await parser.getText();
+    text = result.text || '';
+    pageCount = result.total || 1;
+  } catch (err: any) {
+    console.error('pdf-parse getText error:', err?.message || err);
+    // Fallback: try page-by-page if full extraction fails
     try {
-      const pageText = await parser.getPageText(i);
-      text += pageText + '\n';
-    } catch { break; }
+      const info = await parser.getInfo();
+      pageCount = info.total || 1;
+      const partial = await parser.getText({ first: pageCount });
+      text = partial.text || '';
+    } catch {
+      // Last resort: return empty text
+      text = '';
+    }
+  } finally {
+    try { await parser.destroy(); } catch {}
   }
-  await parser.destroy();
 
   const formType = detectFormType(text);
   const extracted = extractFormData(text, formType);
