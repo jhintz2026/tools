@@ -7,6 +7,7 @@ interface Props {
 
 export function ReturnAnalysisPage({ state }: Props) {
   const [activeTab, setActiveTab] = useState<'current' | 'prior' | 'comparison'>('current');
+  const [showRawText, setShowRawText] = useState(false);
 
   const currentAnalysis = state.currentReturnAnalysis;
   const priorAnalysis = state.priorReturnAnalysis;
@@ -186,6 +187,37 @@ export function ReturnAnalysisPage({ state }: Props) {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Raw Extracted Text — for debugging */}
+        {label === 'current year' && state.currentReturn?.rawText && (
+          <div className="card" style={{ marginTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div className="card-title">Extracted PDF Text (Debug)</div>
+              <button
+                onClick={() => setShowRawText(!showRawText)}
+                style={{
+                  padding: '4px 12px', fontSize: 12, cursor: 'pointer',
+                  background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                  borderRadius: 4, color: 'var(--text-secondary)',
+                }}
+              >
+                {showRawText ? 'Hide' : 'Show'} Raw Text
+              </button>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+              Form detected: <strong>{state.currentReturn.formType}</strong> | Pages: {state.currentReturn.pageCount} | Confidence: {(state.currentReturn.parseConfidence * 100).toFixed(0)}% | Text length: {state.currentReturn.rawText.length.toLocaleString()} chars
+            </p>
+            {showRawText && (
+              <pre style={{
+                background: '#1a1a2e', color: '#ccc', padding: 16, borderRadius: 6,
+                fontSize: 11, lineHeight: 1.5, maxHeight: 500, overflow: 'auto',
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              }}>
+                {state.currentReturn.rawText}
+              </pre>
+            )}
           </div>
         )}
       </div>

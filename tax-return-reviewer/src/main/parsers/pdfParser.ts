@@ -47,18 +47,18 @@ export async function parsePDF(filePath: string): Promise<ParsedDocument> {
 function detectFormType(text: string): TaxFormType {
   const upper = text.toUpperCase();
 
-  // Tax Returns
-  if (/FORM\s*1040/.test(upper) || /U\.?S\.?\s*INDIVIDUAL\s*INCOME\s*TAX\s*RETURN/.test(upper)) {
-    if (/SCHEDULE\s*C/.test(upper) && /PROFIT\s*(OR|AND)\s*LOSS/.test(upper)) return 'SCHEDULE_C';
-    if (/SCHEDULE\s*E/.test(upper) && /SUPPLEMENTAL\s*INCOME/.test(upper)) return 'SCHEDULE_E';
-    if (/SCHEDULE\s*A/.test(upper) && /ITEMIZED\s*DEDUCTIONS/.test(upper)) return 'SCHEDULE_A';
-    if (/SCHEDULE\s*D/.test(upper) && /CAPITAL\s*GAINS/.test(upper)) return 'SCHEDULE_D';
-    if (/SCHEDULE\s*SE/.test(upper) && /SELF.?EMPLOYMENT/.test(upper)) return 'SCHEDULE_SE';
-    if (/SCHEDULE\s*1/.test(upper) || /ADDITIONAL\s*INCOME/.test(upper)) return 'SCHEDULE_1';
-    if (/SCHEDULE\s*2/.test(upper)) return 'SCHEDULE_2';
-    if (/SCHEDULE\s*3/.test(upper)) return 'SCHEDULE_3';
+  // Tax Returns — if the PDF contains Form 1040, treat it as a 1040 even if
+  // it also contains schedules (common in multi-page tax return PDFs).
+  // The 1040 extractor will also pull schedule data from the same text.
+  if (/FORM\s*1040/.test(upper) || /U\.?S\.?\s*INDIVIDUAL\s*INCOME\s*TAX\s*RETURN/.test(upper) || /1040\s/.test(upper)) {
     return 'FORM_1040';
   }
+
+  // Standalone schedules (uploaded separately from the 1040)
+  if (/SCHEDULE\s*C/.test(upper) && /PROFIT\s*(OR|AND)\s*LOSS/.test(upper)) return 'SCHEDULE_C';
+  if (/SCHEDULE\s*E/.test(upper) && /SUPPLEMENTAL\s*INCOME/.test(upper)) return 'SCHEDULE_E';
+  if (/SCHEDULE\s*A/.test(upper) && /ITEMIZED\s*DEDUCTIONS/.test(upper)) return 'SCHEDULE_A';
+  if (/SCHEDULE\s*D/.test(upper) && /CAPITAL\s*GAINS/.test(upper)) return 'SCHEDULE_D';
 
   // Income documents
   if (/FORM\s*W[\-\s]?2(?!\s*G)/i.test(upper) || /WAGE\s*AND\s*TAX\s*STATEMENT/.test(upper)) return 'W2';
@@ -104,6 +104,22 @@ function extractFormData(text: string, formType: TaxFormType): TaxFormData {
   switch (formType) {
     case 'FORM_1040':
       extract1040Data(text, data);
+      // Multi-page tax return PDFs often include schedules — extract them too
+      {
+        const upper = text.toUpperCase();
+        if (/SCHEDULE\s*C/.test(upper) && /PROFIT\s*(OR|AND)\s*LOSS/.test(upper)) {
+          extractScheduleCData(text, data);
+        }
+        if (/SCHEDULE\s*E/.test(upper) && /SUPPLEMENTAL\s*INCOME/.test(upper)) {
+          extractScheduleEData(text, data);
+        }
+        if (/SCHEDULE\s*A/.test(upper) && /ITEMIZED\s*DEDUCTIONS/.test(upper)) {
+          extractScheduleAData(text, data);
+        }
+        if (/SCHEDULE\s*D/.test(upper) && /CAPITAL\s*GAINS/.test(upper)) {
+          extractScheduleDData(text, data);
+        }
+      }
       break;
     case 'W2':
       extractW2Data(text, data);
@@ -162,14 +178,25 @@ function extractFormData(text: string, formType: TaxFormType): TaxFormData {
 // ──────────────────────────────────────────────
 
 function extractTaxYear(text: string): string | undefined {
-  const match = text.match(/(?:TAX\s*YEAR|CALENDAR\s*YEAR|20)\s*(20[1-9]\d)/i)
-    || text.match(/(20[1-9]\d)/);
+  const match = text.match(/(?:TAX\s*YEAR|CALENDAR\s*YEAR)\s*(20[1-9]\d)/i)
+    || text.match(/(?:Jan(?:uary)?|Dec(?:ember)?)\s*\d{0,2}\s*,?\s*(20[2-9]\d)/i)
+    || text.match(/(20[2-9]\d)\s*(?:Form|1040|Return)/i)
+    || text.match(/(20[2-9]\d)/);
   return match?.[1];
 }
 
 function extractName(text: string): string | undefined {
-  const match = text.match(/(?:Name|Taxpayer|Employee)[\s:]*([A-Z][a-zA-Z]+[\s,]+[A-Z][a-zA-Z]+)/i);
-  return match?.[1]?.trim();
+  // Try common patterns from tax software PDFs
+  const patterns = [
+    /(?:Your\s*first\s*name|First\s*name\s*and\s*(?:middle\s*)?initial)[\s\S]{0,30}?([A-Z][a-zA-Z]+[\s,]+[A-Z][a-zA-Z]+)/i,
+    /(?:Name|Taxpayer|Employee)[\s:]+([A-Z][a-zA-Z]+[\s,]+[A-Z][a-zA-Z]+)/i,
+    /([A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+)\s+\d{3}[\-\s]?\d{2}[\-\s]?\d{4}/,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return undefined;
 }
 
 function extractSSN(text: string): string | undefined {
@@ -182,13 +209,109 @@ function extractEIN(text: string): string | undefined {
   return match?.[1];
 }
 
+/**
+ * Extract a dollar amount using multiple strategies:
+ * 1. Direct regex patterns
+ * 2. Label-based search with flexible separators (dots, spaces, tabs)
+ * 3. Negative amounts in parentheses like (1,234)
+ */
 function extractAmount(text: string, ...patterns: RegExp[]): number | undefined {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      const raw = match[1].replace(/[,$\s]/g, '');
+      let raw = match[1].replace(/[,$\s]/g, '');
+      // Handle parenthesized negative amounts
+      if (raw.startsWith('(') && raw.endsWith(')')) {
+        raw = '-' + raw.slice(1, -1);
+      }
       const num = parseFloat(raw);
-      if (!isNaN(num)) return num;
+      if (!isNaN(num) && num !== 0) return num;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Scans the entire text for a line number like "1a" and grabs the LAST dollar
+ * amount that appears near it on the same line or within nearby context.
+ * This handles tax software PDFs where format is:
+ *   "1a   Wages, salaries, tips  . . . . . .  1a    85,000"
+ *   "1a\t85000"
+ *   "1a 85,000"
+ *
+ * Multi-page tax return PDFs often have summary/info pages at the start.
+ * We scan ALL lines and collect ALL matches, preferring matches that appear
+ * AFTER the "Form 1040" header (the actual IRS form section).
+ */
+function extractByLineNumber(text: string, lineNum: string): number | undefined {
+  const lines = text.split(/\n/);
+  // Build regex that matches the line number at a word boundary
+  // For "1a": matches " 1a ", "1a\t", beginning "1a ", etc.
+  const escaped = lineNum.replace(/([a-z])/gi, '\\s*$1');
+  const lineRegex = new RegExp('(?:^|\\s|\\t)' + escaped + '(?:\\s|\\t|\\.|,|$)', 'i');
+  const amountRegex = /\(?\$?\s*[\d,]+\.?\d{0,2}\)?/g;
+
+  let foundFormSection = false;
+  let bestMatch: number | undefined;
+  let preFormMatch: number | undefined;
+
+  for (const line of lines) {
+    // Track when we enter the actual IRS form section
+    if (/Form\s*1040|U\.?S\.?\s*Individual\s*Income\s*Tax|Schedule\s*[A-Z]/i.test(line)) {
+      foundFormSection = true;
+    }
+
+    if (lineRegex.test(line)) {
+      // Find all dollar amounts on this line
+      const amounts: number[] = [];
+      let amtMatch: RegExpExecArray | null;
+      while ((amtMatch = amountRegex.exec(line)) !== null) {
+        let raw = amtMatch[0].replace(/[$,\s]/g, '');
+        if (raw.startsWith('(') && raw.endsWith(')')) {
+          raw = '-' + raw.slice(1, -1);
+        }
+        const num = parseFloat(raw);
+        // Filter out tiny numbers that are likely line numbers themselves
+        if (!isNaN(num) && Math.abs(num) >= 1) {
+          amounts.push(num);
+        }
+      }
+      // Use the LAST amount on the line (usually the value, not a reference number)
+      if (amounts.length > 0) {
+        const val = amounts[amounts.length - 1];
+        if (foundFormSection) {
+          // Prefer values from the actual form section (overwrite if found again)
+          bestMatch = val;
+        } else if (preFormMatch === undefined) {
+          preFormMatch = val;
+        }
+      }
+    }
+  }
+
+  return bestMatch ?? preFormMatch;
+}
+
+/**
+ * Search for a label (like "Wages" or "Total income") followed by any amount
+ * of whitespace, dots, or tabs, then a dollar amount.
+ * Very flexible to handle various PDF text formats.
+ */
+function extractByLabel(text: string, ...labels: string[]): number | undefined {
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Try same-line match first: label ... amount
+    const sameLinePatterns = [
+      new RegExp(escaped + '[\\s.:·…\\-_\\t]{1,80}\\(?\\$?\\s?([\\d,]+\\.?\\d*)\\)?', 'i'),
+      new RegExp(escaped + '[^\\n]{0,80}?\\(?\\$?\\s?([\\d,]+\\.?\\d{0,2})\\)?\\s*$', 'im'),
+    ];
+    for (const pattern of sameLinePatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        let raw = match[1].replace(/[,$\s]/g, '');
+        const num = parseFloat(raw);
+        if (!isNaN(num) && num > 0) return num;
+      }
     }
   }
   return undefined;
@@ -196,27 +319,19 @@ function extractAmount(text: string, ...patterns: RegExp[]): number | undefined 
 
 function extractLineItems(text: string): Array<{ line: string; label: string; value: string }> {
   const items: Array<{ line: string; label: string; value: string }> = [];
-  // Match patterns like "Line 1  Wages...  $50,000" or "1. Wages  50000"
-  const regex = /(?:Line\s*)?(\d+[a-z]?)[\.\s]+([A-Za-z][\w\s,\-\(\)]+?)\s+\$?([\d,]+\.?\d*)/gi;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    items.push({
-      line: match[1],
-      label: match[2].trim(),
-      value: match[3].replace(/,/g, ''),
-    });
+  const lines = text.split(/\n/);
+  for (const line of lines) {
+    // Match "1a  Wages, salaries  85,000" or "Line 1  Description  $50,000"
+    const match = line.match(/(?:Line\s*)?(\d+[a-z]?)\s+([A-Za-z][\w\s,\-\(\)]+?)\s+\$?([\d,]+\.?\d*)\s*$/);
+    if (match) {
+      items.push({
+        line: match[1],
+        label: match[2].trim(),
+        value: match[3].replace(/,/g, ''),
+      });
+    }
   }
   return items;
-}
-
-function parseAmountFromText(text: string, label: string): number {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(escaped + '[\\s.:]*\\$?([\\d,]+\\.?\\d*)', 'i');
-  const match = text.match(regex);
-  if (match) {
-    return parseFloat(match[1].replace(/,/g, '')) || 0;
-  }
-  return 0;
 }
 
 // ──────────────────────────────────────────────
@@ -224,38 +339,61 @@ function parseAmountFromText(text: string, label: string): number {
 // ──────────────────────────────────────────────
 
 function extract1040Data(text: string, data: TaxFormData): void {
-  const wages = extractAmount(text, /(?:Wages|Line\s*1[a-z]?)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const interest = extractAmount(text, /(?:Interest|Line\s*2b?)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const dividends = extractAmount(text, /(?:Dividends|Line\s*3b?)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const capitalGains = extractAmount(text, /(?:Capital\s*gain|Line\s*7)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const businessIncome = extractAmount(text, /(?:Business\s*income|Line\s*8)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const iraDistributions = extractAmount(text, /(?:IRA\s*distributions|Line\s*4[a-d]?)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const pensions = extractAmount(text, /(?:Pensions|Line\s*5[a-d]?)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const socialSecurity = extractAmount(text, /(?:Social\s*security|Line\s*6[a-d]?)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const totalIncome = extractAmount(text, /(?:Total\s*income|Line\s*9)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const agi = extractAmount(text, /(?:Adjusted\s*gross\s*income|AGI|Line\s*11)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const standardDeduction = extractAmount(text, /(?:Standard\s*deduction|Line\s*12)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const taxableIncome = extractAmount(text, /(?:Taxable\s*income|Line\s*15)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const totalTax = extractAmount(text, /(?:Total\s*tax|Line\s*24)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const totalPayments = extractAmount(text, /(?:Total\s*payments|Line\s*33)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const refund = extractAmount(text, /(?:Refund|Overpaid|Line\s*34)[\s.:]+\$?([\d,]+\.?\d*)/i);
-  const amountOwed = extractAmount(text, /(?:Amount\s*(?:you\s*)?owe|Line\s*37)[\s.:]+\$?([\d,]+\.?\d*)/i);
+  // Strategy: try line-number-based extraction first (most reliable for tax software PDFs),
+  // then fall back to label-based extraction, then regex patterns.
+  function get(lineNum: string, ...labels: string[]): number | undefined {
+    return extractByLineNumber(text, lineNum)
+      || extractByLabel(text, ...labels)
+      || undefined;
+  }
 
-  if (wages) data.incomeItems.push({ type: 'wages', description: 'Wages, salaries, tips', amount: wages, formSource: 'Form 1040 Line 1' });
+  // Income items — Form 1040 line numbers
+  const wages = get('1a', 'Wages, salaries', 'Wages salaries tips', 'Wages');
+  const taxExemptInterest = get('2a', 'Tax-exempt interest', 'Tax exempt interest');
+  const interest = get('2b', 'Taxable interest');
+  const qualifiedDiv = get('3a', 'Qualified dividends');
+  const dividends = get('3b', 'Ordinary dividends');
+  const iraDistGross = get('4a', 'IRA distributions');
+  const iraDistTaxable = get('4b', 'IRA.*taxable', 'Taxable amount');
+  const pensionsGross = get('5a', 'Pensions and annuities', 'Pensions');
+  const pensionsTaxable = get('5b', 'Pensions.*taxable');
+  const ssGross = get('6a', 'Social security benefits', 'Social security');
+  const ssTaxable = get('6b', 'Social security.*taxable', 'Taxable social security');
+  const capitalGains = get('7', 'Capital gain', 'Capital loss');
+  const otherIncome = get('8', 'Other income', 'Additional income');
+  const totalIncome = get('9', 'Total income');
+  const adjustments = get('10', 'Adjustments to income');
+  const agi = get('11', 'Adjusted gross income', 'AGI');
+  const deduction = get('12', 'Standard deduction', 'Itemized deductions');
+  const qbiDeduction = get('13', 'Qualified business income', 'QBI deduction');
+  const totalDeductions = get('14', 'Total deductions');
+  const taxableIncome = get('15', 'Taxable income');
+  const tax = get('16', 'Tax ');
+  const totalTax = get('24', 'Total tax');
+  const fedWithheld = get('25a', 'Federal income tax withheld', 'W-2.*withheld');
+  const estimatedTaxPayments = get('26', 'Estimated tax payments');
+  const totalPayments = get('33', 'Total payments');
+  const overpaid = get('34', 'Overpaid', 'Refund');
+  const refund = get('35a', 'Refunded to you');
+  const amountOwed = get('37', 'Amount you owe', 'Amount owed');
+
+  // Push income items
+  if (wages) data.incomeItems.push({ type: 'wages', description: 'Wages, salaries, tips', amount: wages, formSource: 'Form 1040 Line 1a' });
   if (interest) data.incomeItems.push({ type: 'interest', description: 'Taxable interest', amount: interest, formSource: 'Form 1040 Line 2b' });
   if (dividends) data.incomeItems.push({ type: 'dividends', description: 'Ordinary dividends', amount: dividends, formSource: 'Form 1040 Line 3b' });
   if (capitalGains) data.incomeItems.push({ type: 'capital_gains', description: 'Capital gain or loss', amount: capitalGains, formSource: 'Form 1040 Line 7' });
-  if (businessIncome) data.incomeItems.push({ type: 'business', description: 'Business income/loss', amount: businessIncome, formSource: 'Form 1040 Line 8' });
-  if (iraDistributions) data.incomeItems.push({ type: 'ira', description: 'IRA distributions', amount: iraDistributions, formSource: 'Form 1040 Line 4' });
-  if (pensions) data.incomeItems.push({ type: 'pension', description: 'Pensions and annuities', amount: pensions, formSource: 'Form 1040 Line 5' });
-  if (socialSecurity) data.incomeItems.push({ type: 'social_security', description: 'Social security benefits', amount: socialSecurity, formSource: 'Form 1040 Line 6' });
+  if (otherIncome) data.incomeItems.push({ type: 'business', description: 'Other income (Sch 1)', amount: otherIncome, formSource: 'Form 1040 Line 8' });
+  if (iraDistTaxable || iraDistGross) data.incomeItems.push({ type: 'ira', description: 'IRA distributions (taxable)', amount: iraDistTaxable || iraDistGross || 0, formSource: 'Form 1040 Line 4b' });
+  if (pensionsTaxable || pensionsGross) data.incomeItems.push({ type: 'pension', description: 'Pensions and annuities (taxable)', amount: pensionsTaxable || pensionsGross || 0, formSource: 'Form 1040 Line 5b' });
+  if (ssTaxable || ssGross) data.incomeItems.push({ type: 'social_security', description: 'Social security benefits (taxable)', amount: ssTaxable || ssGross || 0, formSource: 'Form 1040 Line 6b' });
 
-  if (standardDeduction) data.deductionItems.push({ type: 'standard_deduction', description: 'Standard deduction', amount: standardDeduction, formSource: 'Form 1040 Line 12' });
+  // Deductions
+  if (deduction) data.deductionItems.push({ type: 'standard_deduction', description: 'Standard/Itemized deduction', amount: deduction, formSource: 'Form 1040 Line 12' });
+  if (qbiDeduction) data.deductionItems.push({ type: 'qbi', description: 'QBI deduction', amount: qbiDeduction, formSource: 'Form 1040 Line 13' });
 
   // Carryover-related items
-  const estimatedTaxPayments = extractAmount(text, /(?:Estimated\s*tax\s*payments|Line\s*26)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const priorYearOverpaymentApplied = extractAmount(text, /(?:(?:Amount\s*)?(?:applied|credited)\s*(?:from|to)\s*(?:\d{4}\s*)?estimated\s*tax|Overpayment\s*applied|Line\s*27)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const netOperatingLossDeduction = extractAmount(text, /(?:Net\s*operating\s*loss|NOL)\s*(?:deduction)?[\s.:]*\$?([\d,]+\.?\d*)/i);
+  const priorYearOverpaymentApplied = get('27', 'Overpayment applied', 'Applied from.*return');
+  const netOperatingLossDeduction = extractByLabel(text, 'Net operating loss', 'NOL deduction');
 
   data.totals = {
     totalIncome,
@@ -263,11 +401,12 @@ function extract1040Data(text: string, data: TaxFormData): void {
     taxableIncome,
     totalTax,
     totalPayments,
-    refund,
+    refund: refund || overpaid,
     amountOwed,
     estimatedTaxPayments,
     priorYearOverpaymentApplied,
     netOperatingLossDeduction,
+    federalWithheld: fedWithheld,
   };
 }
 
@@ -406,41 +545,51 @@ function extractK1Data(text: string, data: TaxFormData): void {
 }
 
 function extractScheduleCData(text: string, data: TaxFormData): void {
-  const businessName = text.match(/(?:Business\s*name|Name\s*of\s*proprietor)[\s:]*([A-Za-z][\w\s&,.\-]+)/i)?.[1]?.trim();
-  const grossReceipts = extractAmount(text, /(?:Line\s*1|Gross\s*receipts)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const costOfGoods = extractAmount(text, /(?:Line\s*4|Cost\s*of\s*goods\s*sold)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const grossProfit = extractAmount(text, /(?:Line\s*7|Gross\s*profit)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const totalExpenses = extractAmount(text, /(?:Line\s*28|Total\s*expenses)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const netProfit = extractAmount(text, /(?:Line\s*31|Net\s*profit)[\s.:]*\$?([\d,]+\.?\d*)/i);
+  const businessName = text.match(/(?:Business\s*name|Name\s*of\s*proprietor|Principal\s*business)[\s:]*([A-Za-z][\w\s&,.\-]+)/i)?.[1]?.trim();
 
-  // Individual expenses
-  const expenses: Record<string, number> = {};
-  const expensePatterns: [string, RegExp][] = [
-    ['Advertising', /(?:Line\s*8|Advertising)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Car and truck', /(?:Line\s*9|Car\s*and\s*truck)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Commissions', /(?:Line\s*10|Commissions)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Contract labor', /(?:Line\s*11|Contract\s*labor)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Depreciation', /(?:Line\s*13|Depreciation)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Insurance', /(?:Line\s*15|Insurance)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Interest', /(?:Line\s*16[a-b]?|(?:Mortgage\s*)?Interest)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Legal and professional', /(?:Line\s*17|Legal\s*and\s*professional)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Office expense', /(?:Line\s*18|Office\s*expense)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Rent or lease', /(?:Line\s*20[a-b]?|Rent\s*or\s*lease)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Repairs', /(?:Line\s*21|Repairs)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Supplies', /(?:Line\s*22|Supplies)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Taxes and licenses', /(?:Line\s*23|Taxes\s*and\s*licenses)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Travel', /(?:Line\s*24a|Travel)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Meals', /(?:Line\s*24b|(?:Deductible\s*)?Meals)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Utilities', /(?:Line\s*25|Utilities)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Wages', /(?:Line\s*26|Wages)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Other expenses', /(?:Line\s*27|Other\s*expenses)[\s.:]*\$?([\d,]+\.?\d*)/i],
+  function getC(lineNum: string, ...labels: string[]): number | undefined {
+    return extractByLineNumber(text, lineNum) || extractByLabel(text, ...labels) || undefined;
+  }
+
+  const grossReceipts = getC('1', 'Gross receipts', 'Gross income');
+  const returns = getC('2', 'Returns and allowances');
+  const costOfGoods = getC('4', 'Cost of goods sold');
+  const grossProfit = getC('7', 'Gross profit');
+  const totalExpenses = getC('28', 'Total expenses');
+  const netProfit = getC('31', 'Net profit', 'Net loss');
+
+  // Individual expenses using line numbers
+  const expenseLines: [string, string, ...string[]][] = [
+    ['Advertising', '8', 'Advertising'],
+    ['Car and truck', '9', 'Car and truck', 'Vehicle expenses'],
+    ['Commissions', '10', 'Commissions and fees', 'Commissions'],
+    ['Contract labor', '11', 'Contract labor'],
+    ['Depreciation', '13', 'Depreciation', 'Depletion'],
+    ['Employee benefits', '14', 'Employee benefit'],
+    ['Insurance', '15', 'Insurance'],
+    ['Interest (mortgage)', '16a', 'Mortgage interest', 'Interest on mortgage'],
+    ['Interest (other)', '16b', 'Other interest'],
+    ['Legal and professional', '17', 'Legal and professional'],
+    ['Office expense', '18', 'Office expense'],
+    ['Pension/profit-sharing', '19', 'Pension', 'Profit-sharing'],
+    ['Rent (vehicles/equipment)', '20a', 'Rent.*vehicle', 'Rent.*equipment'],
+    ['Rent (other)', '20b', 'Rent.*other', 'Other.*rent'],
+    ['Repairs', '21', 'Repairs', 'Maintenance'],
+    ['Supplies', '22', 'Supplies'],
+    ['Taxes and licenses', '23', 'Taxes and licenses'],
+    ['Travel', '24a', 'Travel'],
+    ['Meals', '24b', 'Meals', 'Deductible meals'],
+    ['Utilities', '25', 'Utilities'],
+    ['Wages', '26', 'Wages'],
+    ['Other expenses', '27a', 'Other expenses'],
   ];
 
-  for (const [label, pattern] of expensePatterns) {
-    const val = extractAmount(text, pattern);
+  const expenses: Record<string, number> = {};
+  for (const [label, lineNum, ...labels] of expenseLines) {
+    const val = extractByLineNumber(text, lineNum) || extractByLabel(text, ...labels);
     if (val) {
       expenses[label] = val;
-      data.deductionItems.push({ type: 'schedule_c_expense', description: `Sch C: ${label}`, amount: val, formSource: `Schedule C`, category: label });
+      data.deductionItems.push({ type: 'schedule_c_expense', description: `Sch C: ${label}`, amount: val, formSource: `Schedule C Line ${lineNum}`, category: label });
     }
   }
 
@@ -458,42 +607,47 @@ function extractScheduleCData(text: string, data: TaxFormData): void {
 
 function extractScheduleEData(text: string, data: TaxFormData): void {
   // Try to extract multiple properties
-  const propertyPattern = /(?:Property\s*[A-Z]|(?:Physical\s*)?address)[\s:]*([A-Za-z0-9][\w\s,.\-#]+)/gi;
+  const propertyPattern = /(?:Property\s*[A-Z]|(?:Physical\s*)?address|Street\s*address)[\s:]*([A-Za-z0-9][\w\s,.\-#]+)/gi;
   let propMatch: RegExpExecArray | null;
   const properties: string[] = [];
   while ((propMatch = propertyPattern.exec(text)) !== null) {
     properties.push(propMatch[1].trim());
   }
 
-  const totalRents = extractAmount(text, /(?:Line\s*3|(?:Total\s*)?Rents?\s*received)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const totalRoyalties = extractAmount(text, /(?:Line\s*4|(?:Total\s*)?Royalties?\s*received)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const totalExpenses = extractAmount(text, /(?:Line\s*20|Total\s*expenses)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const netRentalIncome = extractAmount(text, /(?:Line\s*21|(?:Net\s*)?(?:Rental|Royalty)\s*income)[\s.:]*\$?([\d,]+\.?\d*)/i);
-  const depreciation = extractAmount(text, /(?:Line\s*18|Depreciation)[\s.:]*\$?([\d,]+\.?\d*)/i);
+  function getE(lineNum: string, ...labels: string[]): number | undefined {
+    return extractByLineNumber(text, lineNum) || extractByLabel(text, ...labels) || undefined;
+  }
 
-  const expenses: Record<string, number> = {};
-  const rentalExpensePatterns: [string, RegExp][] = [
-    ['Advertising', /(?:Line\s*5|Advertising)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Auto and travel', /(?:Line\s*6|Auto\s*and\s*travel)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Cleaning and maintenance', /(?:Line\s*7|Cleaning)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Commissions', /(?:Line\s*8|Commissions)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Insurance', /(?:Line\s*9|Insurance)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Legal and professional', /(?:Line\s*10|Legal)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Management fees', /(?:Line\s*11|Management\s*fees)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Mortgage interest', /(?:Line\s*12|Mortgage\s*interest)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Other interest', /(?:Line\s*13|Other\s*interest)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Repairs', /(?:Line\s*14|Repairs)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Supplies', /(?:Line\s*15|Supplies)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Taxes', /(?:Line\s*16|Taxes)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Utilities', /(?:Line\s*17|Utilities)[\s.:]*\$?([\d,]+\.?\d*)/i],
-    ['Depreciation', /(?:Line\s*18|Depreciation)[\s.:]*\$?([\d,]+\.?\d*)/i],
+  const totalRents = getE('3', 'Rents received', 'Total rents');
+  const totalRoyalties = getE('4', 'Royalties received', 'Total royalties');
+  const totalExpenses = getE('20', 'Total expenses');
+  const netRentalIncome = getE('21', 'Net rental income', 'Net royalty income');
+  const totalRentalRoyalty = getE('26', 'Total rental and royalty');
+
+  const expenseLines: [string, string, ...string[]][] = [
+    ['Advertising', '5', 'Advertising'],
+    ['Auto and travel', '6', 'Auto and travel'],
+    ['Cleaning and maintenance', '7', 'Cleaning', 'Maintenance'],
+    ['Commissions', '8', 'Commissions'],
+    ['Insurance', '9', 'Insurance'],
+    ['Legal and professional', '10', 'Legal', 'Professional fees'],
+    ['Management fees', '11', 'Management fees'],
+    ['Mortgage interest', '12', 'Mortgage interest'],
+    ['Other interest', '13', 'Other interest'],
+    ['Repairs', '14', 'Repairs'],
+    ['Supplies', '15', 'Supplies'],
+    ['Taxes', '16', 'Taxes'],
+    ['Utilities', '17', 'Utilities'],
+    ['Depreciation', '18', 'Depreciation'],
+    ['Other', '19', 'Other expenses'],
   ];
 
-  for (const [label, pattern] of rentalExpensePatterns) {
-    const val = extractAmount(text, pattern);
+  const expenses: Record<string, number> = {};
+  for (const [label, lineNum, ...labels] of expenseLines) {
+    const val = extractByLineNumber(text, lineNum) || extractByLabel(text, ...labels);
     if (val) {
       expenses[label] = val;
-      data.deductionItems.push({ type: 'schedule_e_expense', description: `Sch E: ${label}`, amount: val, formSource: 'Schedule E', category: label });
+      data.deductionItems.push({ type: 'schedule_e_expense', description: `Sch E: ${label}`, amount: val, formSource: `Schedule E Line ${lineNum}`, category: label });
     }
   }
 
@@ -502,12 +656,12 @@ function extractScheduleEData(text: string, data: TaxFormData): void {
     properties,
     grossIncome: totalRents,
     totalExpenses,
-    netIncome: netRentalIncome,
+    netIncome: netRentalIncome || totalRentalRoyalty,
     expenses,
   });
 
   // Passive loss carryover detection
-  const passiveLoss = extractAmount(text, /(?:Passive\s*(?:activity\s*)?loss|Unallowed\s*loss|Suspended\s*loss|Form\s*8582)[\s.:]*\$?([\d,]+\.?\d*)/i);
+  const passiveLoss = extractByLabel(text, 'Passive activity loss', 'Unallowed loss', 'Suspended loss');
   if (passiveLoss) data.totals.passiveLossCarryover = (data.totals.passiveLossCarryover || 0) + passiveLoss;
 
   if (netRentalIncome) data.incomeItems.push({ type: 'rental', description: 'Schedule E Net rental income', amount: netRentalIncome, formSource: 'Schedule E Line 21' });
