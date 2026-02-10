@@ -1,202 +1,127 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { AppState } from '../App';
 import { AttributedDocument } from '../../shared/types';
 
 interface Props {
   state: AppState;
   onUpdateAttributions: (attributions: AttributedDocument[]) => void;
+  onUploadScheduleDocs: (scheduleKey: string, scheduleLabel: string) => void;
+  onRemoveScheduleDoc: (scheduleKey: string, docIndex: number) => void;
 }
 
-export function ScheduleAttributionPage({ state, onUpdateAttributions }: Props) {
+export function ScheduleAttributionPage({ state, onUploadScheduleDocs, onRemoveScheduleDoc }: Props) {
   const schedules = state.currentReturnAnalysis?.schedules || [];
-  const sourceDocs = state.sourceDocuments;
 
   if (schedules.length === 0) {
     return (
       <div>
-        <h2 className="page-title">Schedule C / Schedule E Attribution</h2>
+        <h2 className="page-title">Schedule C / Schedule E</h2>
         <div className="empty-state">
           <div className="icon">&#128203;</div>
           <h3>No Schedules Detected</h3>
-          <p>Upload a tax return with Schedule C or Schedule E to attribute source documents.</p>
+          <p>Upload a tax return with Schedule C or Schedule E to see them here.</p>
         </div>
       </div>
     );
   }
 
-  const handleAttributeDoc = (docIndex: number, scheduleType: 'C' | 'E', scheduleIndex: number) => {
-    const doc = sourceDocs[docIndex];
-    if (!doc) return;
-
-    const existing = state.scheduleAttributions.find(
-      a => a.filePath === doc.sourceFile && a.scheduleType === scheduleType && a.scheduleIndex === scheduleIndex
-    );
-
-    if (existing) {
-      // Remove attribution
-      onUpdateAttributions(
-        state.scheduleAttributions.filter(a =>
-          !(a.filePath === doc.sourceFile && a.scheduleType === scheduleType && a.scheduleIndex === scheduleIndex)
-        )
-      );
-    } else {
-      // Add attribution
-      const newAttribution: AttributedDocument = {
-        documentId: `doc-${docIndex}`,
-        fileName: doc.sourceFile.split('/').pop() || doc.sourceFile,
-        filePath: doc.sourceFile,
-        scheduleType,
-        scheduleIndex,
-        assignedBy: 'user',
-      };
-      onUpdateAttributions([...state.scheduleAttributions, newAttribution]);
-    }
-  };
-
-  const isAttributed = (docPath: string, scheduleType: 'C' | 'E', scheduleIndex: number) => {
-    return state.scheduleAttributions.some(
-      a => a.filePath === docPath && a.scheduleType === scheduleType && a.scheduleIndex === scheduleIndex
-    );
-  };
-
   return (
     <div>
-      <h2 className="page-title">Schedule C / Schedule E Attribution</h2>
-      <p className="page-subtitle">
-        Assign source documents (P&L statements, expense reports, 1099s, etc.) to specific business or rental schedules
-      </p>
+      <h2 className="page-title">Schedule C / Schedule E</h2>
+      <p className="page-subtitle">Each detected business / rental schedule with its attributed source documents</p>
 
-      {schedules.map((schedule, scheduleIdx) => (
-        <div key={scheduleIdx} className="attribution-group">
-          <div className="attribution-header">
-            <div>
-              <strong>Schedule {schedule.scheduleType}</strong>
-              {schedule.businessName && <span style={{ color: 'var(--text-secondary)', marginLeft: 8 }}>{schedule.businessName}</span>}
-            </div>
-            <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
-              <span>Gross: ${(schedule.grossIncome || 0).toLocaleString()}</span>
-              <span>Expenses: ${(schedule.totalExpenses || 0).toLocaleString()}</span>
-              <span style={{ color: (schedule.netIncome || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 600 }}>
-                Net: ${(schedule.netIncome || 0).toLocaleString()}
-              </span>
-            </div>
-          </div>
-          <div className="attribution-body">
-            {/* Expense breakdown */}
-            {Object.keys(schedule.expenses).length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>
-                  Expense Categories on Return
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {Object.entries(schedule.expenses).sort((a, b) => b[1] - a[1]).map(([cat, amount]) => (
-                    <span key={cat} className="status-badge warning">
-                      {cat}: ${amount.toLocaleString()}
-                    </span>
-                  ))}
-                </div>
+      {schedules.map((schedule, scheduleIdx) => {
+        const key = `${schedule.scheduleType}-${scheduleIdx}`;
+        const label = `Schedule ${schedule.scheduleType}${schedule.businessName ? ' - ' + schedule.businessName : ''}`;
+        const docs = state.scheduleSourceDocs[key] || [];
+
+        return (
+          <div key={key} className="attribution-group" style={{ marginBottom: 16 }}>
+            <div className="attribution-header">
+              <div><strong>{label}</strong></div>
+              <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
+                <span>Gross: ${(schedule.grossIncome || 0).toLocaleString()}</span>
+                <span>Expenses: ${(schedule.totalExpenses || 0).toLocaleString()}</span>
+                <span style={{ color: (schedule.netIncome || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 600 }}>
+                  Net: ${(schedule.netIncome || 0).toLocaleString()}
+                </span>
               </div>
-            )}
-
-            {/* Attributed documents */}
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>
-              Attributed Source Documents
             </div>
+            <div className="attribution-body">
+              {/* Expense categories */}
+              {Object.keys(schedule.expenses).length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>Expense Categories on Return</div>
+                  <table className="data-table">
+                    <thead><tr><th>Category</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+                    <tbody>
+                      {Object.entries(schedule.expenses).sort((a, b) => b[1] - a[1]).map(([cat, amount]) => (
+                        <tr key={cat}><td>{cat}</td><td className="amount">${amount.toLocaleString()}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
-            {sourceDocs.length === 0 ? (
-              <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                Upload source documents first, then assign them to this schedule.
-              </p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {sourceDocs.map((doc, docIdx) => {
-                  const attributed = isAttributed(doc.sourceFile, schedule.scheduleType, scheduleIdx);
-                  const fileName = doc.sourceFile.split('/').pop() || doc.sourceFile;
-                  const totalIncome = doc.data.incomeItems.reduce((s, i) => s + i.amount, 0);
-                  const totalExpenses = doc.data.deductionItems.reduce((s, i) => s + i.amount, 0);
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>
+                Source Documents ({docs.length})
+              </div>
 
-                  return (
-                    <div
-                      key={docIdx}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                        border: `1px solid ${attributed ? 'var(--accent-blue)' : 'var(--border)'}`,
-                        borderRadius: 'var(--radius)', background: attributed ? 'rgba(88,166,255,0.05)' : 'transparent',
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => handleAttributeDoc(docIdx, schedule.scheduleType, scheduleIdx)}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={attributed}
-                        readOnly
-                        style={{ accentColor: 'var(--accent-blue)' }}
-                      />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 500, fontSize: 13 }}>{fileName}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                          {doc.formType}
-                          {totalIncome > 0 && ` | Income: $${totalIncome.toLocaleString()}`}
-                          {totalExpenses > 0 && ` | Expenses: $${totalExpenses.toLocaleString()}`}
-                        </div>
+              {docs.map((doc, docIdx) => {
+                const fileName = doc.sourceFile.split(/[/\\]/).pop() || doc.sourceFile;
+                const totalIncome = doc.data.incomeItems.reduce((s, i) => s + i.amount, 0);
+                const totalExpenses = doc.data.deductionItems.reduce((s, i) => s + i.amount, 0);
+                return (
+                  <div key={docIdx} className="file-item">
+                    <div className="file-info" style={{ flex: 1 }}>
+                      <div className="file-name">{fileName}</div>
+                      <div className="file-type">{doc.formType}</div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                        {totalIncome > 0 && <span className="status-badge info" style={{ fontSize: 11 }}>Income: ${totalIncome.toLocaleString()}</span>}
+                        {totalExpenses > 0 && <span className="status-badge warning" style={{ fontSize: 11 }}>Expenses: ${totalExpenses.toLocaleString()}</span>}
                       </div>
-                      {attributed && (
-                        <span className="status-badge success" style={{ fontSize: 11 }}>Attributed</span>
-                      )}
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    <button className="btn btn-sm btn-danger" onClick={() => onRemoveScheduleDoc(key, docIdx)}>Remove</button>
+                  </div>
+                );
+              })}
 
-            {/* Attributed summary */}
-            {state.scheduleAttributions.filter(a => a.scheduleType === schedule.scheduleType && a.scheduleIndex === scheduleIdx).length > 0 && (
-              <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius)' }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                  Attribution Summary
-                </div>
-                {(() => {
-                  const attrs = state.scheduleAttributions.filter(
-                    a => a.scheduleType === schedule.scheduleType && a.scheduleIndex === scheduleIdx
-                  );
-                  const attrDocs = sourceDocs.filter(sd => attrs.some(a => a.filePath === sd.sourceFile));
-                  const totalSourceIncome = attrDocs.reduce((s, d) => s + d.data.incomeItems.reduce((si, i) => si + i.amount, 0), 0);
-                  const totalSourceExpenses = attrDocs.reduce((s, d) => s + d.data.deductionItems.reduce((si, i) => si + i.amount, 0), 0);
-                  const incomeDiff = (schedule.grossIncome || 0) - totalSourceIncome;
-                  const expenseDiff = (schedule.totalExpenses || 0) - totalSourceExpenses;
-
-                  return (
+              {docs.length > 0 && (() => {
+                const totalSourceIncome = docs.reduce((s, d) => s + d.data.incomeItems.reduce((si, i) => si + i.amount, 0), 0);
+                const totalSourceExpenses = docs.reduce((s, d) => s + d.data.deductionItems.reduce((si, i) => si + i.amount, 0), 0);
+                const incomeDiff = (schedule.grossIncome || 0) - totalSourceIncome;
+                const expenseDiff = (schedule.totalExpenses || 0) - totalSourceExpenses;
+                return (
+                  <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius)' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>Reconciliation Preview</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, fontSize: 13 }}>
                       <div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Source Doc Income</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Source Income</div>
                         <div>${totalSourceIncome.toLocaleString()}</div>
-                        {Math.abs(incomeDiff) > 0.5 && (
-                          <div style={{ fontSize: 11, color: 'var(--accent-red)' }}>
-                            Diff: ${Math.abs(incomeDiff).toLocaleString()}
-                          </div>
-                        )}
+                        {Math.abs(incomeDiff) > 0.5 && <div style={{ fontSize: 11, color: 'var(--accent-red)' }}>Diff: ${Math.abs(incomeDiff).toLocaleString()}</div>}
                       </div>
                       <div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Source Doc Expenses</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Source Expenses</div>
                         <div>${totalSourceExpenses.toLocaleString()}</div>
-                        {Math.abs(expenseDiff) > 0.5 && (
-                          <div style={{ fontSize: 11, color: 'var(--accent-red)' }}>
-                            Diff: ${Math.abs(expenseDiff).toLocaleString()}
-                          </div>
-                        )}
+                        {Math.abs(expenseDiff) > 0.5 && <div style={{ fontSize: 11, color: 'var(--accent-red)' }}>Diff: ${Math.abs(expenseDiff).toLocaleString()}</div>}
                       </div>
                       <div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Documents Assigned</div>
-                        <div>{attrs.length}</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Documents</div>
+                        <div>{docs.length}</div>
                       </div>
                     </div>
-                  );
-                })()}
+                  </div>
+                );
+              })()}
+
+              <div className="upload-zone" onClick={() => onUploadScheduleDocs(key, label)} style={{ padding: 16, marginTop: 12 }}>
+                <h3 style={{ fontSize: 14 }}>{docs.length > 0 ? '+ Add More Documents' : 'Upload Source Documents'}</h3>
+                <p style={{ fontSize: 12 }}>P&L, 1099s, expense reports, mileage logs, receipts</p>
               </div>
-            )}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -242,6 +242,11 @@ function extract1040Data(text: string, data: TaxFormData): void {
 
   if (standardDeduction) data.deductionItems.push({ type: 'standard_deduction', description: 'Standard deduction', amount: standardDeduction, formSource: 'Form 1040 Line 12' });
 
+  // Carryover-related items
+  const estimatedTaxPayments = extractAmount(text, /(?:Estimated\s*tax\s*payments|Line\s*26)[\s.:]*\$?([\d,]+\.?\d*)/i);
+  const priorYearOverpaymentApplied = extractAmount(text, /(?:(?:Amount\s*)?(?:applied|credited)\s*(?:from|to)\s*(?:\d{4}\s*)?estimated\s*tax|Overpayment\s*applied|Line\s*27)[\s.:]*\$?([\d,]+\.?\d*)/i);
+  const netOperatingLossDeduction = extractAmount(text, /(?:Net\s*operating\s*loss|NOL)\s*(?:deduction)?[\s.:]*\$?([\d,]+\.?\d*)/i);
+
   data.totals = {
     totalIncome,
     adjustedGrossIncome: agi,
@@ -250,6 +255,9 @@ function extract1040Data(text: string, data: TaxFormData): void {
     totalPayments,
     refund,
     amountOwed,
+    estimatedTaxPayments,
+    priorYearOverpaymentApplied,
+    netOperatingLossDeduction,
   };
 }
 
@@ -488,6 +496,10 @@ function extractScheduleEData(text: string, data: TaxFormData): void {
     expenses,
   });
 
+  // Passive loss carryover detection
+  const passiveLoss = extractAmount(text, /(?:Passive\s*(?:activity\s*)?loss|Unallowed\s*loss|Suspended\s*loss|Form\s*8582)[\s.:]*\$?([\d,]+\.?\d*)/i);
+  if (passiveLoss) data.totals.passiveLossCarryover = (data.totals.passiveLossCarryover || 0) + passiveLoss;
+
   if (netRentalIncome) data.incomeItems.push({ type: 'rental', description: 'Schedule E Net rental income', amount: netRentalIncome, formSource: 'Schedule E Line 21' });
 }
 
@@ -511,9 +523,17 @@ function extractScheduleDData(text: string, data: TaxFormData): void {
   const longTermGain = extractAmount(text, /(?:Line\s*15|(?:Net\s*)?Long[\-\s]?term\s*capital\s*gain)[\s.:]*\$?([\d,]+\.?\d*)/i);
   const totalGain = extractAmount(text, /(?:Line\s*16|(?:Total\s*)?(?:Net\s*)?capital\s*gain)[\s.:]*\$?([\d,]+\.?\d*)/i);
 
+  // Capital loss carryover detection
+  const shortTermCarryover = extractAmount(text, /(?:Line\s*6|Short[\-\s]?term\s*capital\s*loss\s*carryover)[\s.:]*\$?([\d,]+\.?\d*)/i);
+  const longTermCarryover = extractAmount(text, /(?:Line\s*14|Long[\-\s]?term\s*capital\s*loss\s*carryover)[\s.:]*\$?([\d,]+\.?\d*)/i);
+  const capitalLossCarryover = extractAmount(text, /(?:Capital\s*loss\s*carryover|Loss\s*carryforward)[\s.:]*\$?([\d,]+\.?\d*)/i);
+
   if (shortTermGain) data.incomeItems.push({ type: 'capital_gains', description: 'Short-term capital gain/loss', amount: shortTermGain, formSource: 'Schedule D Line 7' });
   if (longTermGain) data.incomeItems.push({ type: 'capital_gains', description: 'Long-term capital gain/loss', amount: longTermGain, formSource: 'Schedule D Line 15' });
   data.totals.totalCapitalGains = totalGain;
+  data.totals.shortTermCapitalLossCarryover = shortTermCarryover;
+  data.totals.longTermCapitalLossCarryover = longTermCarryover;
+  data.totals.capitalLossCarryover = capitalLossCarryover || ((shortTermCarryover || 0) + (longTermCarryover || 0)) || undefined;
 }
 
 function extract1098Data(text: string, data: TaxFormData, formType: TaxFormType): void {

@@ -5,12 +5,13 @@ interface Props {
   state: AppState;
   onNavigate: (page: Page) => void;
   onRunReconciliation: () => void;
+  totalSourceDocs: number;
 }
 
-export function DashboardPage({ state, onNavigate, onRunReconciliation }: Props) {
+export function DashboardPage({ state, onNavigate, onRunReconciliation, totalSourceDocs }: Props) {
   const hasReturn = !!state.currentReturn;
   const hasPrior = !!state.priorReturn;
-  const hasDocs = state.sourceDocuments.length > 0;
+  const hasDocs = totalSourceDocs > 0;
   const hasRecon = !!state.reconciliation;
 
   const steps = [

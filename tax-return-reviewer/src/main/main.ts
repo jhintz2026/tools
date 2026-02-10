@@ -16,7 +16,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    title: 'Tax Return Reviewer',
+    title: 'HST Tax Return Reviewer',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -45,18 +45,32 @@ app.on('activate', () => {
 // IPC Handlers
 // ──────────────────────────────────────────────
 
-ipcMain.handle('dialog:openFiles', async (_event, options: { filters?: Electron.FileFilter[]; title?: string }) => {
-  const result = await dialog.showOpenDialog(mainWindow!, {
-    title: options.title || 'Select Files',
-    filters: options.filters || [
-      { name: 'All Supported', extensions: ['pdf', 'xlsx', 'xls', 'csv', 'png', 'jpg', 'jpeg', 'tiff', 'bmp'] },
-      { name: 'PDF', extensions: ['pdf'] },
-      { name: 'Excel/CSV', extensions: ['xlsx', 'xls', 'csv'] },
-      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'tiff', 'bmp'] },
-    ],
-    properties: ['openFile', 'multiSelections'],
-  });
-  return result.filePaths;
+ipcMain.handle('dialog:openFiles', async (_event, options: { filters?: Electron.FileFilter[]; title?: string; multi?: boolean }) => {
+  const win = mainWindow || BrowserWindow.getFocusedWindow();
+  if (!win) {
+    console.error('dialog:openFiles - no window available');
+    return [];
+  }
+
+  const properties: Array<'openFile' | 'multiSelections'> = ['openFile'];
+  if (options.multi !== false) properties.push('multiSelections');
+
+  try {
+    const result = await dialog.showOpenDialog(win, {
+      title: options.title || 'Select Files',
+      filters: options.filters || [
+        { name: 'All Supported', extensions: ['pdf', 'xlsx', 'xls', 'csv', 'png', 'jpg', 'jpeg', 'tiff', 'bmp'] },
+        { name: 'PDF', extensions: ['pdf'] },
+        { name: 'Excel/CSV', extensions: ['xlsx', 'xls', 'csv'] },
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'tiff', 'bmp'] },
+      ],
+      properties,
+    });
+    return result.canceled ? [] : result.filePaths;
+  } catch (err: any) {
+    console.error('dialog:openFiles error:', err);
+    return [];
+  }
 });
 
 ipcMain.handle('file:parse', async (_event, filePath: string) => {
@@ -74,6 +88,7 @@ ipcMain.handle('file:parse', async (_event, filePath: string) => {
       return { success: false, error: `Unsupported file type: ${ext}`, fileName, filePath };
     }
   } catch (err: any) {
+    console.error('file:parse error:', err);
     return { success: false, error: err.message, fileName, filePath };
   }
 });

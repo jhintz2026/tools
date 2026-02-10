@@ -5,9 +5,10 @@ interface SidebarProps {
   activePage: Page;
   onNavigate: (page: Page) => void;
   state: AppState;
+  totalSourceDocs: number;
 }
 
-export function Sidebar({ activePage, onNavigate, state }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate, state, totalSourceDocs }: SidebarProps) {
   const issueCount = state.reconciliation
     ? state.reconciliation.summary.totalErrors + state.reconciliation.summary.totalWarnings
     : 0;
@@ -33,8 +34,8 @@ export function Sidebar({ activePage, onNavigate, state }: SidebarProps) {
         >
           <span className="icon">&#8593;</span>
           Upload Documents
-          {state.sourceDocuments.length > 0 && (
-            <span className="badge success">{state.sourceDocuments.length}</span>
+          {totalSourceDocs > 0 && (
+            <span className="badge success">{totalSourceDocs}</span>
           )}
         </button>
 
@@ -94,6 +95,19 @@ export function Sidebar({ activePage, onNavigate, state }: SidebarProps) {
           Tax Savings
           {savingsCount > 0 && (
             <span className="badge success">{savingsCount}</span>
+          )}
+        </button>
+
+        <button
+          className={`nav-item ${activePage === 'review-report' ? 'active' : ''}`}
+          onClick={() => onNavigate('review-report')}
+        >
+          <span className="icon">&#128220;</span>
+          Review Report
+          {state.reconciliation && (
+            <span className={`badge ${state.reconciliation.summary.overallStatus === 'pass' ? 'success' : 'warning'}`}>
+              {state.reconciliation.summary.overallStatus === 'pass' ? '\u2713' : '!'}
+            </span>
           )}
         </button>
       </div>

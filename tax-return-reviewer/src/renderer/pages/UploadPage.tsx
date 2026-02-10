@@ -1,11 +1,14 @@
 import React from 'react';
 import { AppState } from '../App';
+import { ParsedDocument } from '../../shared/types';
 
 interface Props {
   state: AppState;
   onUploadReturn: (type: 'current' | 'prior') => void;
   onUploadSourceDocs: () => void;
   onRemoveSourceDoc: (index: number) => void;
+  onUploadScheduleDocs: (scheduleKey: string, scheduleLabel: string) => void;
+  onRemoveScheduleDoc: (scheduleKey: string, docIndex: number) => void;
 }
 
 const FORM_TYPE_LABELS: Record<string, string> = {
@@ -44,30 +47,59 @@ function getFormLabel(type: string): string {
   return FORM_TYPE_LABELS[type] || type;
 }
 
-function getFormIcon(type: string): string {
-  if (type.startsWith('W2')) return '\uD83D\uDCBC';
-  if (type.includes('1099')) return '\uD83D\uDCE8';
-  if (type === 'SSA_1099') return '\uD83C\uDFE5';
-  if (type === 'K1') return '\uD83C\uDFE2';
-  if (type.startsWith('SCHEDULE')) return '\uD83D\uDCC4';
-  if (type === 'FORM_1040') return '\uD83D\uDCCB';
-  if (type.includes('1098')) return '\uD83C\uDFE0';
-  if (type === 'PROFIT_LOSS') return '\uD83D\uDCC8';
-  if (type === 'EXPENSE_REPORT') return '\uD83E\uDDFE';
-  if (type === 'MILEAGE_LOG') return '\uD83D\uDE97';
-  return '\uD83D\uDCC4';
+function DocItem({ doc, onRemove }: { doc: ParsedDocument; onRemove?: () => void }) {
+  const fileName = doc.sourceFile.split(/[/\\]/).pop() || doc.sourceFile;
+  return (
+    <div className="file-item">
+      <div className="file-info" style={{ flex: 1 }}>
+        <div className="file-name">{fileName}</div>
+        <div className="file-type">{getFormLabel(doc.formType)}</div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+          {doc.data.incomeItems.map((item, j) => (
+            <span key={j} className="status-badge info" style={{ fontSize: 11 }}>
+              {item.description}: ${item.amount.toLocaleString()}
+            </span>
+          ))}
+          {doc.data.deductionItems.slice(0, 3).map((item, j) => (
+            <span key={`d${j}`} className="status-badge warning" style={{ fontSize: 11 }}>
+              {item.description}: ${item.amount.toLocaleString()}
+            </span>
+          ))}
+          {doc.data.deductionItems.length > 3 && (
+            <span className="status-badge" style={{ fontSize: 11, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>
+              +{doc.data.deductionItems.length - 3} more
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="file-actions">
+        <span className={`status-badge ${doc.parseConfidence > 0.7 ? 'success' : 'warning'}`}>
+          {Math.round(doc.parseConfidence * 100)}%
+        </span>
+        {onRemove && (
+          <button className="btn btn-sm btn-danger" onClick={onRemove}>Remove</button>
+        )}
+      </div>
+    </div>
+  );
 }
 
-export function UploadPage({ state, onUploadReturn, onUploadSourceDocs, onRemoveSourceDoc }: Props) {
+export function UploadPage({ state, onUploadReturn, onUploadSourceDocs, onRemoveSourceDoc, onUploadScheduleDocs, onRemoveScheduleDoc }: Props) {
+  const schedules = state.currentReturnAnalysis?.schedules || [];
+  const hasReturn = !!state.currentReturn;
+
   return (
     <div>
       <h2 className="page-title">Upload Documents</h2>
-      <p className="page-subtitle">Upload tax returns and source documents for comprehensive review</p>
+      <p className="page-subtitle">Step-by-step: upload returns, then add source documents for each schedule and general items</p>
 
-      {/* Tax Returns Section */}
+      {/* ─── STEP 1: Tax Returns ─── */}
       <div className="card">
         <div className="card-header">
-          <div className="card-title">Tax Returns</div>
+          <div>
+            <div className="card-title">Step 1: Upload Tax Returns</div>
+            <div className="card-subtitle">Upload the current year return to analyze it, then optionally add prior year</div>
+          </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -75,18 +107,44 @@ export function UploadPage({ state, onUploadReturn, onUploadSourceDocs, onRemove
           <div>
             <h4 style={{ fontSize: 14, marginBottom: 10, color: 'var(--text-secondary)' }}>Current Year Return</h4>
             {state.currentReturn ? (
-              <div className="file-item">
-                <span className="file-icon">{getFormIcon(state.currentReturn.formType)}</span>
-                <div className="file-info">
-                  <div className="file-name">{state.currentReturn.sourceFile.split('/').pop()}</div>
-                  <div className="file-type">{getFormLabel(state.currentReturn.formType)}</div>
-                  <div className="file-status">
-                    <span className={`status-badge ${state.currentReturn.parseConfidence > 0.7 ? 'success' : 'warning'}`}>
-                      {Math.round(state.currentReturn.parseConfidence * 100)}% confidence
-                    </span>
+              <div>
+                <div className="file-item">
+                  <div className="file-info" style={{ flex: 1 }}>
+                    <div className="file-name">{state.currentReturn.sourceFile.split(/[/\\]/).pop()}</div>
+                    <div className="file-type">{getFormLabel(state.currentReturn.formType)}</div>
+                    {state.currentReturnAnalysis && (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                        <span className="status-badge success">Analyzed</span>
+                        <span className="status-badge info">
+                          Income: ${state.currentReturnAnalysis.totalIncome.toLocaleString()}
+                        </span>
+                        {schedules.length > 0 && (
+                          <span className="status-badge warning">
+                            {schedules.length} Schedule(s) detected
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
+                  <button className="btn btn-sm" onClick={() => onUploadReturn('current')}>Replace</button>
                 </div>
-                <button className="btn btn-sm" onClick={() => onUploadReturn('current')}>Replace</button>
+
+                {/* Show detected schedules inline */}
+                {schedules.length > 0 && (
+                  <div style={{ marginTop: 8, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius)' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Detected Schedules:
+                    </div>
+                    {schedules.map((sch, i) => (
+                      <div key={i} style={{ fontSize: 13, padding: '4px 0', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Schedule {sch.scheduleType}{sch.businessName ? ` - ${sch.businessName}` : ''}</span>
+                        <span style={{ color: (sch.netIncome || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                          Net: ${(sch.netIncome || 0).toLocaleString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="upload-zone" onClick={() => onUploadReturn('current')}>
@@ -104,15 +162,12 @@ export function UploadPage({ state, onUploadReturn, onUploadSourceDocs, onRemove
             </h4>
             {state.priorReturn ? (
               <div className="file-item">
-                <span className="file-icon">{getFormIcon(state.priorReturn.formType)}</span>
-                <div className="file-info">
-                  <div className="file-name">{state.priorReturn.sourceFile.split('/').pop()}</div>
+                <div className="file-info" style={{ flex: 1 }}>
+                  <div className="file-name">{state.priorReturn.sourceFile.split(/[/\\]/).pop()}</div>
                   <div className="file-type">{getFormLabel(state.priorReturn.formType)}</div>
-                  <div className="file-status">
-                    <span className={`status-badge ${state.priorReturn.parseConfidence > 0.7 ? 'success' : 'warning'}`}>
-                      {Math.round(state.priorReturn.parseConfidence * 100)}% confidence
-                    </span>
-                  </div>
+                  {state.priorReturnAnalysis && (
+                    <span className="status-badge success" style={{ marginTop: 4, display: 'inline-block' }}>Analyzed</span>
+                  )}
                 </div>
                 <button className="btn btn-sm" onClick={() => onUploadReturn('prior')}>Replace</button>
               </div>
@@ -120,94 +175,133 @@ export function UploadPage({ state, onUploadReturn, onUploadSourceDocs, onRemove
               <div className="upload-zone" onClick={() => onUploadReturn('prior')}>
                 <div className="icon">&#128197;</div>
                 <h3>Upload Prior Year Return</h3>
-                <p>Compare with last year to find missing items</p>
+                <p>Compare with last year to find missing items and carryovers</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Source Documents Section */}
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <div className="card-title">Source Documents</div>
-            <div className="card-subtitle">
-              W-2s, 1099s, K-1s, SSA-1099, W-2G, P&L statements, expense reports, and more
+      {/* ─── STEP 2: Per-Schedule Source Documents ─── */}
+      {hasReturn && schedules.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">Step 2: Upload Source Documents for Each Schedule</div>
+              <div className="card-subtitle">
+                Upload P&L statements, 1099s, expense reports, mileage logs, etc. for each business / rental property
+              </div>
             </div>
           </div>
-          <button className="btn btn-primary btn-sm" onClick={onUploadSourceDocs}>
-            + Add Documents
-          </button>
-        </div>
 
-        {state.sourceDocuments.length > 0 ? (
-          <div>
-            {state.sourceDocuments.map((doc, index) => (
-              <div key={index} className="file-item">
-                <span className="file-icon">{getFormIcon(doc.formType)}</span>
-                <div className="file-info">
-                  <div className="file-name">{doc.sourceFile.split('/').pop()}</div>
-                  <div className="file-type">{getFormLabel(doc.formType)}</div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                    {doc.data.incomeItems.map((item, j) => (
-                      <span key={j} className="status-badge info" style={{ fontSize: 11 }}>
-                        {item.description}: ${item.amount.toLocaleString()}
-                      </span>
-                    ))}
-                    {doc.data.deductionItems.slice(0, 3).map((item, j) => (
-                      <span key={`d${j}`} className="status-badge warning" style={{ fontSize: 11 }}>
-                        {item.description}: ${item.amount.toLocaleString()}
-                      </span>
-                    ))}
-                    {doc.data.deductionItems.length > 3 && (
-                      <span className="status-badge" style={{ fontSize: 11, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>
-                        +{doc.data.deductionItems.length - 3} more
-                      </span>
-                    )}
+          {schedules.map((schedule, scheduleIdx) => {
+            const key = `${schedule.scheduleType}-${scheduleIdx}`;
+            const label = `Schedule ${schedule.scheduleType}${schedule.businessName ? ' - ' + schedule.businessName : ''}`;
+            const docs = state.scheduleSourceDocs[key] || [];
+
+            return (
+              <div key={key} className="attribution-group" style={{ marginBottom: 12 }}>
+                <div className="attribution-header">
+                  <div>
+                    <strong>{label}</strong>
+                  </div>
+                  <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
+                    <span>Gross: ${(schedule.grossIncome || 0).toLocaleString()}</span>
+                    <span>Expenses: ${(schedule.totalExpenses || 0).toLocaleString()}</span>
+                    <span style={{ color: (schedule.netIncome || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 600 }}>
+                      Net: ${(schedule.netIncome || 0).toLocaleString()}
+                    </span>
                   </div>
                 </div>
-                <div className="file-actions">
-                  <span className={`status-badge ${doc.parseConfidence > 0.7 ? 'success' : 'warning'}`}>
-                    {Math.round(doc.parseConfidence * 100)}%
-                  </span>
-                  <button className="btn btn-sm btn-danger" onClick={() => onRemoveSourceDoc(index)}>
-                    Remove
-                  </button>
+                <div className="attribution-body">
+                  {/* Expense categories from return */}
+                  {Object.keys(schedule.expenses).length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Return expense categories:</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {Object.entries(schedule.expenses).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => (
+                          <span key={cat} className="status-badge warning" style={{ fontSize: 11 }}>
+                            {cat}: ${amt.toLocaleString()}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Uploaded docs for this schedule */}
+                  {docs.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      {docs.map((doc, docIdx) => (
+                        <DocItem key={docIdx} doc={doc} onRemove={() => onRemoveScheduleDoc(key, docIdx)} />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Upload zone */}
+                  <div
+                    className="upload-zone"
+                    onClick={() => onUploadScheduleDocs(key, label)}
+                    style={{ padding: 20 }}
+                  >
+                    <h3 style={{ fontSize: 14 }}>
+                      {docs.length > 0 ? '+ Add More Documents' : 'Upload Source Documents'}
+                    </h3>
+                    <p style={{ fontSize: 12 }}>
+                      P&L, 1099-NEC, 1099-K, expense reports, mileage logs, receipts for {label}
+                    </p>
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="upload-zone" onClick={onUploadSourceDocs}>
-            <div className="icon">&#128193;</div>
-            <h3>Upload Source Documents</h3>
-            <p>Supports PDF, Excel, CSV, and scanned images (OCR)</p>
-            <p style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-              W-2 &bull; 1099-NEC &bull; 1099-MISC &bull; 1099-INT &bull; 1099-DIV &bull; 1099-R &bull;
-              1099-B &bull; 1099-G &bull; 1099-K &bull; SSA-1099 &bull; K-1 &bull; W-2G &bull;
-              1098 &bull; 1098-T &bull; 1098-E &bull; 5498 &bull; P&L &bull; Expense Reports
-            </p>
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Summary */}
-      {state.sourceDocuments.length > 0 && (
+      {/* ─── STEP 3: General Source Documents ─── */}
+      {hasReturn && (
         <div className="card">
-          <div className="card-title" style={{ marginBottom: 12 }}>Document Summary</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-            {Object.entries(
-              state.sourceDocuments.reduce<Record<string, number>>((acc, doc) => {
-                const label = getFormLabel(doc.formType);
-                acc[label] = (acc[label] || 0) + 1;
-                return acc;
-              }, {})
-            ).map(([type, count]) => (
-              <span key={type} className="status-badge info">
-                {type}: {count}
-              </span>
-            ))}
+          <div className="card-header">
+            <div>
+              <div className="card-title">
+                {schedules.length > 0 ? 'Step 3' : 'Step 2'}: Upload General Source Documents
+              </div>
+              <div className="card-subtitle">
+                W-2s, 1099-INT, 1099-DIV, 1099-R, SSA-1099, K-1, W-2G, 1098, and other documents not tied to a specific schedule
+              </div>
+            </div>
+            {state.sourceDocuments.length > 0 && (
+              <button className="btn btn-primary btn-sm" onClick={onUploadSourceDocs}>
+                + Add More
+              </button>
+            )}
+          </div>
+
+          {state.sourceDocuments.length > 0 ? (
+            <div>
+              {state.sourceDocuments.map((doc, index) => (
+                <DocItem key={index} doc={doc} onRemove={() => onRemoveSourceDoc(index)} />
+              ))}
+            </div>
+          ) : (
+            <div className="upload-zone" onClick={onUploadSourceDocs}>
+              <div className="icon">&#128193;</div>
+              <h3>Upload Source Documents</h3>
+              <p>Supports PDF, Excel, CSV, and scanned images (OCR)</p>
+              <p style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+                W-2 &bull; 1099-INT &bull; 1099-DIV &bull; 1099-R &bull; 1099-B &bull; 1099-G &bull;
+                SSA-1099 &bull; K-1 &bull; W-2G &bull; 1098 &bull; 1098-T &bull; 1098-E &bull; 5498
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Waiting state */}
+      {!hasReturn && (
+        <div className="card" style={{ textAlign: 'center', padding: 30, opacity: 0.6 }}>
+          <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
+            Upload a current year tax return above to unlock source document uploads.
+            The return will be analyzed automatically and any Schedule C / E will appear with their own upload areas.
           </div>
         </div>
       )}

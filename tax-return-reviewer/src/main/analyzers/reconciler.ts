@@ -46,6 +46,8 @@ export function reconcileDocuments(
   // ─── 2. Compare current return to prior year ───
   if (currentData && priorData) {
     compareToPriorYear(currentData, priorData, priorYearComparison, missingItems);
+    // Check for carryover items from prior year
+    analyzeCarryovers(currentData, priorData, missingItems);
   }
 
   // ─── 3. Reconcile Schedules C/E to attributed documents ───
@@ -357,6 +359,164 @@ function compareToPriorYear(
         description: `Prior year included Schedule ${priorSch.scheduleType}${priorSch.businessName ? ' (' + priorSch.businessName + ')' : ''} but it is not present this year.`,
         recommendation: `Verify if Schedule ${priorSch.scheduleType} activity has ceased or was accidentally omitted.`,
       });
+    }
+  }
+}
+
+// ──────────────────────────────────────────────
+// 3b. Carryover worksheet analysis
+// ──────────────────────────────────────────────
+
+function analyzeCarryovers(
+  current: TaxFormData,
+  prior: TaxFormData,
+  missingItems: ReviewIssue[]
+): void {
+  // ── 1. Passive Loss Carryover ──
+  // If prior year had passive losses (Schedule E with negative net, or explicit passive loss),
+  // check that the current year accounts for them.
+  const priorPassiveLoss = prior.totals?.passiveLossCarryover || 0;
+  const priorRentalEntries = prior.scheduleEntries.filter(s => s.scheduleType === 'E');
+  const priorRentalLosses = priorRentalEntries
+    .filter(s => (s.netIncome || 0) < 0)
+    .reduce((sum, s) => sum + Math.abs(s.netIncome || 0), 0);
+  const passiveLossAmount = priorPassiveLoss || priorRentalLosses;
+
+  if (passiveLossAmount > 0) {
+    const currentPassiveLoss = current.totals?.passiveLossCarryover || 0;
+    const currentHasRentalActivity = current.scheduleEntries.some(s => s.scheduleType === 'E');
+
+    if (currentPassiveLoss === 0 && !currentHasRentalActivity) {
+      missingItems.push({
+        severity: 'warning',
+        category: 'Carryover Missing',
+        title: 'Passive loss carryover from prior year not reflected',
+        description: `Prior year had $${passiveLossAmount.toLocaleString()} in passive activity losses (suspended/unallowed). These should carry forward to the current year via Form 8582. Verify the passive loss carryover worksheet has been completed.`,
+        amount: passiveLossAmount,
+        recommendation: 'Review Form 8582 (Passive Activity Loss Limitations) and ensure suspended passive losses from the prior year are properly carried forward.',
+      });
+    } else if (passiveLossAmount > 0) {
+      missingItems.push({
+        severity: 'info',
+        category: 'Carryover Verification',
+        title: 'Passive loss carryover detected from prior year',
+        description: `Prior year had $${passiveLossAmount.toLocaleString()} in passive activity losses. Verify the carryover worksheet is complete and amounts are correctly applied to the current year return.`,
+        amount: passiveLossAmount,
+        recommendation: 'Confirm the passive loss carryover worksheet (Form 8582) correctly carries forward all suspended losses.',
+      });
+    }
+  }
+
+  // ── 2. Estimated Tax Carryover (overpayment applied) ──
+  const priorOverpayment = prior.totals?.refund || 0;
+  const priorOverpaymentApplied = prior.totals?.priorYearOverpaymentApplied || 0;
+
+  // If the prior year had a refund or overpayment, some may have been applied to current year estimates
+  if (priorOverpayment > 0) {
+    const currentEstimatedPayments = current.totals?.estimatedTaxPayments || 0;
+    const currentOverpaymentApplied = current.totals?.priorYearOverpaymentApplied || 0;
+
+    if (currentOverpaymentApplied === 0 && currentEstimatedPayments === 0) {
+      missingItems.push({
+        severity: 'info',
+        category: 'Carryover Verification',
+        title: 'Prior year overpayment - verify estimated tax application',
+        description: `Prior year return shows a refund/overpayment of $${priorOverpayment.toLocaleString()}. Verify whether any amount was elected to be applied to current year estimated taxes. If so, it should appear on the current return.`,
+        amount: priorOverpayment,
+        recommendation: 'Check if the taxpayer elected to apply any of the prior year overpayment to current year estimated taxes (Form 1040 Line 27).',
+      });
+    }
+  }
+
+  // ── 3. Net Operating Loss (NOL) Carryover ──
+  const priorNOL = prior.totals?.netOperatingLossDeduction || 0;
+  const priorAGI = prior.totals?.adjustedGrossIncome || 0;
+
+  // Check if prior year had an NOL deduction or if AGI was negative (potential NOL)
+  if (priorNOL > 0) {
+    const currentNOL = current.totals?.netOperatingLossDeduction || 0;
+    if (currentNOL === 0) {
+      missingItems.push({
+        severity: 'warning',
+        category: 'Carryover Missing',
+        title: 'Net Operating Loss (NOL) carryover from prior year',
+        description: `Prior year claimed an NOL deduction of $${priorNOL.toLocaleString()}. If there is remaining NOL to carry forward, ensure it is applied to the current year return.`,
+        amount: priorNOL,
+        recommendation: 'Review the NOL carryover worksheet and verify the remaining NOL carryforward amount. Post-2017 NOLs are limited to 80% of taxable income.',
+      });
+    }
+  } else if (priorAGI < 0) {
+    missingItems.push({
+      severity: 'warning',
+      category: 'Carryover Verification',
+      title: 'Prior year negative AGI may indicate NOL carryforward',
+      description: `Prior year had a negative Adjusted Gross Income of $${Math.abs(priorAGI).toLocaleString()}, which may generate a Net Operating Loss. Verify whether an NOL carryforward should be applied to the current year.`,
+      amount: Math.abs(priorAGI),
+      recommendation: 'Complete the NOL carryover worksheet. Post-2017 NOLs can be carried forward indefinitely but are limited to 80% of taxable income.',
+    });
+  }
+
+  // ── 4. Capital Gains/Loss Carryover ──
+  const priorCapitalLossCarryover = prior.totals?.capitalLossCarryover || 0;
+  const priorShortTermCarryover = prior.totals?.shortTermCapitalLossCarryover || 0;
+  const priorLongTermCarryover = prior.totals?.longTermCapitalLossCarryover || 0;
+  const priorTotalCapitalGains = prior.totals?.totalCapitalGains || 0;
+
+  // If prior year had capital loss carryover explicitly or net capital losses
+  if (priorCapitalLossCarryover > 0 || priorShortTermCarryover > 0 || priorLongTermCarryover > 0) {
+    const totalCarryover = priorCapitalLossCarryover || (priorShortTermCarryover + priorLongTermCarryover);
+    const currentCapitalLossCarryover = current.totals?.capitalLossCarryover || 0;
+
+    if (currentCapitalLossCarryover === 0) {
+      missingItems.push({
+        severity: 'warning',
+        category: 'Carryover Missing',
+        title: 'Capital loss carryover from prior year not reflected',
+        description: `Prior year had capital loss carryover of $${totalCarryover.toLocaleString()}${priorShortTermCarryover ? ` (ST: $${priorShortTermCarryover.toLocaleString()})` : ''}${priorLongTermCarryover ? ` (LT: $${priorLongTermCarryover.toLocaleString()})` : ''}. This should be entered on the current year Schedule D.`,
+        amount: totalCarryover,
+        recommendation: 'Complete the Capital Loss Carryover Worksheet from Schedule D instructions. Enter short-term carryover on Schedule D Line 6 and long-term carryover on Line 14.',
+      });
+    }
+  } else if (priorTotalCapitalGains < -3000) {
+    // If prior year had capital losses beyond the $3,000 deduction limit, there should be a carryover
+    const excessLoss = Math.abs(priorTotalCapitalGains) - 3000;
+    if (excessLoss > 0) {
+      const currentCapitalLossCarryover = current.totals?.capitalLossCarryover || 0;
+      const currentShortTermCarryover = current.totals?.shortTermCapitalLossCarryover || 0;
+      const currentLongTermCarryover = current.totals?.longTermCapitalLossCarryover || 0;
+
+      if (currentCapitalLossCarryover === 0 && currentShortTermCarryover === 0 && currentLongTermCarryover === 0) {
+        missingItems.push({
+          severity: 'warning',
+          category: 'Carryover Missing',
+          title: 'Capital loss carryforward likely missing',
+          description: `Prior year had net capital losses of $${Math.abs(priorTotalCapitalGains).toLocaleString()}, exceeding the $3,000 annual deduction limit. Approximately $${excessLoss.toLocaleString()} should carry forward to the current year Schedule D.`,
+          amount: excessLoss,
+          recommendation: 'Complete the Capital Loss Carryover Worksheet. The excess capital loss beyond the $3,000 annual limit carries forward to the next tax year.',
+        });
+      }
+    }
+  }
+
+  // ── 5. Check for prior year Schedule C/E that might have carryover implications ──
+  const priorScheduleC = prior.scheduleEntries.filter(s => s.scheduleType === 'C');
+  for (const priorBiz of priorScheduleC) {
+    const netLoss = priorBiz.netIncome || 0;
+    if (netLoss < -5000) {
+      // Significant business loss - may have passive loss or NOL implications
+      const currentHasSameBiz = current.scheduleEntries.some(
+        s => s.scheduleType === 'C' && s.businessName === priorBiz.businessName
+      );
+      if (!currentHasSameBiz) {
+        missingItems.push({
+          severity: 'info',
+          category: 'Carryover Verification',
+          title: `Prior year Schedule C business "${priorBiz.businessName || 'unnamed'}" had significant loss`,
+          description: `Prior year Schedule C for "${priorBiz.businessName || 'unnamed business'}" showed a net loss of $${Math.abs(netLoss).toLocaleString()}. If the business ceased, verify any remaining carryovers (NOL, depreciation recapture, etc.) are properly handled.`,
+          amount: Math.abs(netLoss),
+          recommendation: 'Verify if any NOL or other carryovers from this business activity need to be carried forward.',
+        });
+      }
     }
   }
 }

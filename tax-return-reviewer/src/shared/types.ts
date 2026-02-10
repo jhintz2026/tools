@@ -204,7 +204,7 @@ export interface ProjectState {
 // ──────────────────────────────────────────────
 
 export interface ElectronAPI {
-  openFiles: (options: { filters?: any[]; title?: string }) => Promise<string[]>;
+  openFiles: (options: { filters?: any[]; title?: string; multi?: boolean }) => Promise<string[]>;
   parseFile: (filePath: string) => Promise<{ success: boolean; data?: ParsedDocument; error?: string; fileName: string; filePath: string }>;
   analyzeTaxReturn: (parsedData: any) => Promise<{ success: boolean; data?: ReturnAnalysis; error?: string }>;
   reconcile: (data: { currentReturn: any; priorReturn?: any; sourceDocuments: any[]; scheduleAttributions: any[] }) => Promise<{ success: boolean; data?: ReconciliationResult; error?: string }>;
