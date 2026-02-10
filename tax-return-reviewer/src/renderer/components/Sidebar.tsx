@@ -55,7 +55,7 @@ export function Sidebar({ activePage, onNavigate, state, totalSourceDocs }: Side
           onClick={() => onNavigate('schedules')}
         >
           <span className="icon">&#128203;</span>
-          Schedule C / E
+          Schedules
           {state.currentReturnAnalysis?.schedules && state.currentReturnAnalysis.schedules.length > 0 && (
             <span className="badge warning">{state.currentReturnAnalysis.schedules.length}</span>
           )}

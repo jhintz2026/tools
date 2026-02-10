@@ -169,7 +169,7 @@ export default function App() {
       setState(prev => {
         const existing = prev.scheduleSourceDocs[scheduleKey] || [];
         // Also build attributions automatically
-        const scheduleType = scheduleKey.split('-')[0] as 'C' | 'E';
+        const scheduleType = scheduleKey.split('-')[0] as 'A' | 'B' | 'C' | 'D' | 'E' | '1' | '2' | '3' | 'SE';
         const scheduleIndex = parseInt(scheduleKey.split('-')[1], 10);
         const newAttributions: AttributedDocument[] = newDocs.map((doc, i) => ({
           documentId: `${scheduleKey}-${existing.length + i}`,

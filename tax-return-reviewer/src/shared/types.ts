@@ -61,8 +61,12 @@ export interface DeductionItem {
 }
 
 export interface ScheduleEntry {
-  scheduleType: 'C' | 'E';
+  scheduleType: 'A' | 'B' | 'C' | 'D' | 'E' | '1' | '2' | '3' | 'SE';
   businessName?: string;
+  /** For Schedule E: label like "Property A", "Property B", etc. */
+  propertyLabel?: string;
+  /** For Schedule E: address of the property */
+  propertyAddress?: string;
   properties?: string[];
   grossIncome?: number;
   totalExpenses?: number;
@@ -75,7 +79,7 @@ export interface AttributedDocument {
   documentId: string;
   fileName: string;
   filePath: string;
-  scheduleType: 'C' | 'E';
+  scheduleType: 'A' | 'B' | 'C' | 'D' | 'E' | '1' | '2' | '3' | 'SE';
   scheduleIndex: number;
   assignedBy: 'user' | 'auto';
 }
@@ -133,7 +137,7 @@ export interface PriorYearDifference {
 }
 
 export interface ScheduleReconciliation {
-  scheduleType: 'C' | 'E';
+  scheduleType: 'A' | 'B' | 'C' | 'D' | 'E' | '1' | '2' | '3' | 'SE';
   scheduleIndex: number;
   businessName?: string;
   returnAmount: number;

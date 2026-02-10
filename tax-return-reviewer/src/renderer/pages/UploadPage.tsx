@@ -14,10 +14,14 @@ interface Props {
 const FORM_TYPE_LABELS: Record<string, string> = {
   'FORM_1040': 'Form 1040 (Tax Return)',
   'SCHEDULE_A': 'Schedule A (Itemized Deductions)',
+  'SCHEDULE_B': 'Schedule B (Interest & Dividends)',
   'SCHEDULE_C': 'Schedule C (Business P&L)',
   'SCHEDULE_D': 'Schedule D (Capital Gains)',
   'SCHEDULE_E': 'Schedule E (Rental/Royalty)',
   'SCHEDULE_SE': 'Schedule SE (Self-Employment Tax)',
+  'SCHEDULE_1': 'Schedule 1 (Additional Income)',
+  'SCHEDULE_2': 'Schedule 2 (Additional Taxes)',
+  'SCHEDULE_3': 'Schedule 3 (Additional Credits)',
   'W2': 'W-2 (Wage Statement)',
   'W2G': 'W-2G (Gambling Winnings)',
   '1099_NEC': '1099-NEC (Nonemployee Compensation)',
@@ -189,15 +193,26 @@ export function UploadPage({ state, onUploadReturn, onUploadSourceDocs, onRemove
             <div>
               <div className="card-title">Step 2: Upload Source Documents for Each Schedule</div>
               <div className="card-subtitle">
-                Upload P&L statements, 1099s, expense reports, mileage logs, etc. for each business / rental property
+                Upload supporting documents for each schedule: P&Ls, 1099s, receipts, 1098s, etc.
               </div>
             </div>
           </div>
 
           {schedules.map((schedule, scheduleIdx) => {
             const key = `${schedule.scheduleType}-${scheduleIdx}`;
-            const label = `Schedule ${schedule.scheduleType}${schedule.businessName ? ' - ' + schedule.businessName : ''}`;
+            const propInfo = schedule.propertyLabel ? ` (${schedule.propertyLabel}${schedule.propertyAddress ? ' - ' + schedule.propertyAddress : ''})` : '';
+            const label = `Schedule ${schedule.scheduleType}${schedule.businessName ? ' - ' + schedule.businessName : ''}${propInfo}`;
             const docs = state.scheduleSourceDocs[key] || [];
+
+            // Determine upload hint text based on schedule type
+            let uploadHint = 'P&L, 1099s, expense reports, receipts';
+            if (schedule.scheduleType === 'A') uploadHint = '1098 (mortgage), property tax bills, medical receipts, charitable donation receipts';
+            else if (schedule.scheduleType === 'B') uploadHint = '1099-INT, 1099-DIV statements from banks and brokerages';
+            else if (schedule.scheduleType === 'E') uploadHint = 'Rental P&L, 1099-MISC, property management statements, repair receipts';
+            else if (schedule.scheduleType === 'C') uploadHint = 'P&L, 1099-NEC, 1099-K, expense reports, mileage logs, receipts';
+            else if (schedule.scheduleType === '1') uploadHint = 'W-2s, 1099s, HSA statements, student loan interest (1098-E)';
+            else if (schedule.scheduleType === '2') uploadHint = 'AMT worksheets, self-employment tax documentation';
+            else if (schedule.scheduleType === '3') uploadHint = 'Foreign tax documents, education credit forms (1098-T), energy credit receipts';
 
             return (
               <div key={key} className="attribution-group" style={{ marginBottom: 12 }}>
@@ -206,18 +221,20 @@ export function UploadPage({ state, onUploadReturn, onUploadSourceDocs, onRemove
                     <strong>{label}</strong>
                   </div>
                   <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
-                    <span>Gross: ${(schedule.grossIncome || 0).toLocaleString()}</span>
-                    <span>Expenses: ${(schedule.totalExpenses || 0).toLocaleString()}</span>
-                    <span style={{ color: (schedule.netIncome || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 600 }}>
-                      Net: ${(schedule.netIncome || 0).toLocaleString()}
-                    </span>
+                    {schedule.grossIncome != null && schedule.grossIncome > 0 && <span>Gross: ${schedule.grossIncome.toLocaleString()}</span>}
+                    {schedule.totalExpenses != null && schedule.totalExpenses > 0 && <span>Expenses: ${schedule.totalExpenses.toLocaleString()}</span>}
+                    {schedule.netIncome != null && (
+                      <span style={{ color: schedule.netIncome >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 600 }}>
+                        Net: ${schedule.netIncome.toLocaleString()}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="attribution-body">
                   {/* Expense categories from return */}
                   {Object.keys(schedule.expenses).length > 0 && (
                     <div style={{ marginBottom: 12 }}>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Return expense categories:</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Line items from return:</div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         {Object.entries(schedule.expenses).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => (
                           <span key={cat} className="status-badge warning" style={{ fontSize: 11 }}>
@@ -247,7 +264,7 @@ export function UploadPage({ state, onUploadReturn, onUploadSourceDocs, onRemove
                       {docs.length > 0 ? '+ Add More Documents' : 'Upload Source Documents'}
                     </h3>
                     <p style={{ fontSize: 12 }}>
-                      P&L, 1099-NEC, 1099-K, expense reports, mileage logs, receipts for {label}
+                      {uploadHint} for {label}
                     </p>
                   </div>
                 </div>

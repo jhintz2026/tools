@@ -147,10 +147,16 @@ export function ReturnAnalysisPage({ state }: Props) {
             {analysis.schedules.map((schedule, i) => (
               <div key={i} className="attribution-group" style={{ marginBottom: 12 }}>
                 <div className="attribution-header">
-                  <span>Schedule {schedule.scheduleType}{schedule.businessName ? ` - ${schedule.businessName}` : ''}</span>
-                  <span style={{ color: schedule.netIncome && schedule.netIncome > 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-                    Net: ${(schedule.netIncome || 0).toLocaleString()}
+                  <span>
+                    Schedule {schedule.scheduleType}
+                    {schedule.businessName ? ` - ${schedule.businessName}` : ''}
+                    {schedule.propertyLabel ? ` (${schedule.propertyLabel}${schedule.propertyAddress ? ' - ' + schedule.propertyAddress : ''})` : ''}
                   </span>
+                  {schedule.netIncome != null && (
+                    <span style={{ color: schedule.netIncome >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                      Net: ${schedule.netIncome.toLocaleString()}
+                    </span>
+                  )}
                 </div>
                 <div className="attribution-body">
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>

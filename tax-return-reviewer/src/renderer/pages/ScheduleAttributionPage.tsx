@@ -15,11 +15,11 @@ export function ScheduleAttributionPage({ state, onUploadScheduleDocs, onRemoveS
   if (schedules.length === 0) {
     return (
       <div>
-        <h2 className="page-title">Schedule C / Schedule E</h2>
+        <h2 className="page-title">Schedules</h2>
         <div className="empty-state">
           <div className="icon">&#128203;</div>
           <h3>No Schedules Detected</h3>
-          <p>Upload a tax return with Schedule C or Schedule E to see them here.</p>
+          <p>Upload a tax return to see detected schedules (A, B, C, D, E, 1, 2, 3) here.</p>
         </div>
       </div>
     );
@@ -27,12 +27,13 @@ export function ScheduleAttributionPage({ state, onUploadScheduleDocs, onRemoveS
 
   return (
     <div>
-      <h2 className="page-title">Schedule C / Schedule E</h2>
-      <p className="page-subtitle">Each detected business / rental schedule with its attributed source documents</p>
+      <h2 className="page-title">Schedules</h2>
+      <p className="page-subtitle">All detected schedules with line item detail and source documents</p>
 
       {schedules.map((schedule, scheduleIdx) => {
         const key = `${schedule.scheduleType}-${scheduleIdx}`;
-        const label = `Schedule ${schedule.scheduleType}${schedule.businessName ? ' - ' + schedule.businessName : ''}`;
+        const propInfo = schedule.propertyLabel ? ` (${schedule.propertyLabel}${schedule.propertyAddress ? ' - ' + schedule.propertyAddress : ''})` : '';
+        const label = `Schedule ${schedule.scheduleType}${schedule.businessName ? ' - ' + schedule.businessName : ''}${propInfo}`;
         const docs = state.scheduleSourceDocs[key] || [];
 
         return (
