@@ -330,28 +330,48 @@ function parseCCHTwoYearComparison(
     'Balance due',
   ];
 
+  // Amount token: handles positive (1,234.), negative (-1,234.), parenthesized ((1,234.)), zero (0.)
+  const amt = '\\(?-?\\$?\\s*[\\d,]+\\.?\\d*\\)?';
+
   for (const label of comparisonLabels) {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(escaped + '\\s+([\\d,]+\\.?\\d*)\\s+([\\d,]+\\.?\\d*)\\s+[-]?([\\d,]+\\.?\\d*)', 'i');
+    // Try 3-column pattern first (prior, current, difference)
+    const pattern3 = new RegExp(escaped + '\\s+(' + amt + ')\\s+(' + amt + ')\\s+(' + amt + ')', 'i');
+    // Fallback: 2-column pattern (prior, current) — no difference column
+    const pattern2 = new RegExp(escaped + '\\s+(' + amt + ')\\s+(' + amt + ')(?:\\s|$)', 'i');
 
+    let matched = false;
     for (const line of lines) {
-      const match = line.match(pattern);
-      if (match) {
-        const priorYear = parseCCHAmount(match[1]);
-        const currentYear = parseCCHAmount(match[2]);
-        // The difference column may have a negative sign separate from the number
-        let difference = parseCCHAmount(match[3]);
-        // Check if difference should be negative
-        if (line.includes('-' + match[3].trim())) {
-          difference = -difference;
-        }
+      const match3 = line.match(pattern3);
+      if (match3) {
+        const priorYear = parseCCHAmount(match3[1]);
+        const currentYear = parseCCHAmount(match3[2]);
         comparison.push({
           description: label,
           priorYearAmount: priorYear,
           currentYearAmount: currentYear,
           difference: currentYear - priorYear,
         });
+        matched = true;
         break;
+      }
+    }
+
+    // Fallback to 2-column if 3-column didn't match
+    if (!matched) {
+      for (const line of lines) {
+        const match2 = line.match(pattern2);
+        if (match2) {
+          const priorYear = parseCCHAmount(match2[1]);
+          const currentYear = parseCCHAmount(match2[2]);
+          comparison.push({
+            description: label,
+            priorYearAmount: priorYear,
+            currentYearAmount: currentYear,
+            difference: currentYear - priorYear,
+          });
+          break;
+        }
       }
     }
   }
@@ -447,8 +467,10 @@ function parseCCHScheduleEComparison(
   for (const [searchLabel] of expensePatterns) {
     const escaped = searchLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // Match: "Label  amount1  amount2  amount3" (prior, current, diff)
+    // Amounts can be positive, negative (-1,234.), parenthesized ((1,234.)), or zero (0.)
+    const amtToken = '\\(?-?\\$?\\s*[\\d,]+\\.?\\d*\\)?';
     const pattern = new RegExp(
-      escaped + '\\s*\\*?\\s+([\\d,]+\\.?\\d*)\\s+([\\d,]+\\.?\\d*)\\s+[-]?([\\d,]+\\.?\\d*)',
+      escaped + '\\s*\\*?\\s+(' + amtToken + ')\\s+(' + amtToken + ')(?:\\s+[-]?' + amtToken + ')?',
       'i'
     );
 
@@ -465,11 +487,7 @@ function parseCCHScheduleEComparison(
           depreciation = currentYearAmount;
           expenseMap['Depreciation'] = currentYearAmount;
         } else if (searchLabel === 'Income or (loss)') {
-          netIncome = currentYearAmount;
-          // Check if this is a loss (negative) — look for negative sign in the current year column
-          if (line.match(new RegExp(escaped + '.*?[-]\\s*' + match[2].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))) {
-            netIncome = -currentYearAmount;
-          }
+          netIncome = parseCCHAmount(match[2]);
         } else if (searchLabel === 'Deductible rental loss') {
           deductibleLoss = currentYearAmount;
         } else if (searchLabel !== 'Subtotal') {
@@ -478,6 +496,33 @@ function parseCCHScheduleEComparison(
           }
         }
         break;
+      }
+    }
+
+    // Fallback: if the 3-column pattern didn't match, try matching label + single amount
+    // (some CCH pages only show current year amounts for certain lines)
+    if (searchLabel !== 'Subtotal') {
+      const escaped2 = searchLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      let alreadyMatched = false;
+      if (searchLabel === 'Rents received') alreadyMatched = rents !== 0;
+      else if (searchLabel === 'Total expenses') alreadyMatched = totalExpenses !== 0;
+      else if (searchLabel === 'Income or (loss)') alreadyMatched = netIncome !== 0;
+      else if (searchLabel === 'Depreciation expense or depletion') alreadyMatched = depreciation !== 0;
+      else if (searchLabel === 'Deductible rental loss') alreadyMatched = deductibleLoss !== 0;
+      else alreadyMatched = !!expenseMap[searchLabel];
+
+      if (!alreadyMatched) {
+        const val = extractCCHLabelAmount(pageText, searchLabel);
+        if (val !== undefined && val !== 0) {
+          if (searchLabel === 'Rents received') rents = val;
+          else if (searchLabel === 'Total expenses') totalExpenses = val;
+          else if (searchLabel === 'Income or (loss)') netIncome = val;
+          else if (searchLabel === 'Depreciation expense or depletion') {
+            depreciation = val;
+            expenseMap['Depreciation'] = val;
+          } else if (searchLabel === 'Deductible rental loss') deductibleLoss = val;
+          else expenseMap[searchLabel] = val;
+        }
       }
     }
   }

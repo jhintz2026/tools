@@ -83,7 +83,7 @@ function splitTextByFormSection(text: string): FormSections {
     { pattern: /Schedule\s*C[\s\(].*(?:Profit|Loss)/i, key: 'scheduleC' as const },
     { pattern: /Schedule\s*E[\s\(].*(?:Supplemental|Rental)/i, key: 'scheduleE' as const },
     { pattern: /Schedule\s*A[\s\(].*(?:Itemized)/i, key: 'scheduleA' as const },
-    { pattern: /Schedule\s*B[\s\(].*(?:Interest|Dividend)/i, key: 'scheduleB' as const },
+    { pattern: /Schedule\s*B\s*\(?(?:Form\s*1040)?[^a-zA-Z]*(?:Interest\s*and\s*(?:Ordinary\s*)?Dividend)/i, key: 'scheduleB' as const },
     { pattern: /Schedule\s*D[\s\(].*(?:Capital)/i, key: 'scheduleD' as const },
     { pattern: /Schedule\s*SE[\s\(].*(?:Self.?Employment)/i, key: 'scheduleSE' as const },
     { pattern: /Schedule\s*1[\s\(].*(?:Additional\s*Income)/i, key: 'schedule1' as const },
@@ -849,11 +849,20 @@ function extractScheduleEData(sectionText: string, data: TaxFormData): void {
       propertyData[label] = { rents: 0, expenses: {}, totalExpenses: 0, netIncome: 0 };
     }
 
-    for (const [expLabel, lineNum] of expenseLabels) {
+    for (const [expLabel, lineNum, ...altLabels] of expenseLabels) {
+      // Try matching by line number first, then by text label
+      const lineNumVal = parseInt(lineNum, 10);
       const lineRegex = new RegExp('(?:^|\\s)' + lineNum + '(?:\\s|\\t|\\.|$)', 'i');
+      // Also try matching by label text (more reliable for some formats)
+      const labelPatterns = [expLabel, ...altLabels].map(
+        l => new RegExp(l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+      );
 
+      let matched = false;
       for (const line of lines) {
-        if (lineRegex.test(line)) {
+        const matchesByNum = lineRegex.test(line);
+        const matchesByLabel = labelPatterns.some(p => p.test(line));
+        if (matchesByNum || matchesByLabel) {
           // Extract ALL amounts from this line
           const amountRegex = /\(?\$?\s*([\d,]+\.?\d{0,2})\)?/g;
           const amounts: number[] = [];
@@ -864,9 +873,11 @@ function extractScheduleEData(sectionText: string, data: TaxFormData): void {
             if (!isNaN(num) && num >= 1) amounts.push(num);
           }
 
-          // If we have multiple amounts, assign to properties in order
-          // Skip first few amounts that might be line numbers
-          const meaningfulAmounts = amounts.filter(a => a >= 10);
+          // Filter out the line number itself and very small numbers that are
+          // likely form references, but keep real expense amounts (>= 50)
+          const meaningfulAmounts = amounts.filter(a => a !== lineNumVal && a >= 50);
+          if (meaningfulAmounts.length === 0) continue;
+
           for (let i = 0; i < Math.min(meaningfulAmounts.length, detectedProperties.length); i++) {
             const propLabel = detectedProperties[i];
             if (expLabel === 'Rents received') {
@@ -879,7 +890,8 @@ function extractScheduleEData(sectionText: string, data: TaxFormData): void {
               propertyData[propLabel].expenses[expLabel] = meaningfulAmounts[i];
             }
           }
-          break; // Only use first matching line
+          matched = true;
+          break;
         }
       }
     }
