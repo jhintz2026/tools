@@ -1,4 +1,12 @@
 @echo off
+:: Request admin privileges if not already elevated
+net session >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo Requesting administrator privileges...
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+
 title HST Tax Return Reviewer - Install to C:\HSTReviewTool
 echo ============================================
 echo   Installing to C:\HSTReviewTool
@@ -13,7 +21,7 @@ if %ERRORLEVEL% NEQ 0 (
     echo Please install Node.js first:
     echo   1. Go to https://nodejs.org
     echo   2. Download the LTS version
-    echo   3. Run the installer (accept all defaults)
+    echo   3. Run the installer, accept all defaults
     echo   4. CLOSE this window and re-run this script
     echo.
     pause
@@ -27,14 +35,28 @@ if exist "C:\HSTReviewTool" (
     rmdir /s /q "C:\HSTReviewTool"
 )
 mkdir "C:\HSTReviewTool"
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Could not create C:\HSTReviewTool
+    echo Try running this script as Administrator.
+    pause
+    exit /b 1
+)
 
 :: Copy project files
 echo [2/5] Copying files...
-xcopy "%~dp0src" "C:\HSTReviewTool\src\" /E /I /Q >nul
-xcopy "%~dp0package.json" "C:\HSTReviewTool\" /Q >nul
-xcopy "%~dp0package-lock.json" "C:\HSTReviewTool\" /Q >nul
-xcopy "%~dp0tsconfig.json" "C:\HSTReviewTool\" /Q >nul
-xcopy "%~dp0webpack.config.js" "C:\HSTReviewTool\" /Q >nul
+xcopy "%~dp0src" "C:\HSTReviewTool\src\" /E /I /Q
+xcopy "%~dp0package.json" "C:\HSTReviewTool\" /Q /Y
+xcopy "%~dp0package-lock.json" "C:\HSTReviewTool\" /Q /Y
+xcopy "%~dp0tsconfig.json" "C:\HSTReviewTool\" /Q /Y
+xcopy "%~dp0webpack.config.js" "C:\HSTReviewTool\" /Q /Y
+
+:: Verify files were copied
+if not exist "C:\HSTReviewTool\package.json" (
+    echo ERROR: Files were not copied. Make sure this script is inside
+    echo the tax-return-reviewer folder next to package.json.
+    pause
+    exit /b 1
+)
 
 :: Install dependencies
 echo [3/5] Installing dependencies... (this may take a few minutes)
@@ -77,3 +99,4 @@ echo ============================================
 echo.
 
 npx electron dist/main.js
+pause
