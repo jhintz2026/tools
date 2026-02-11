@@ -171,6 +171,39 @@ export interface ReconciliationSummary {
 }
 
 // ──────────────────────────────────────────────
+// CCH-Specific Data Types
+// ──────────────────────────────────────────────
+
+export interface DepreciationAsset {
+  description: string;
+  dateAcquired: string;
+  method: string;
+  life: string;
+  cost: number;
+  basisForDepreciation: number;
+  beginningAccumulatedDepreciation: number;
+  currentYearDeduction: number;
+  endingAccumulatedDepreciation: number;
+  scheduleReference?: string;
+  propertyName?: string;
+}
+
+export interface TaxCarryover {
+  type: 'passive_loss' | 'capital_loss' | 'nol' | 'qbi_loss' | 'charitable';
+  description: string;
+  form: string;
+  amount: number;
+  property?: string;
+}
+
+export interface TwoYearComparisonItem {
+  description: string;
+  priorYearAmount: number;
+  currentYearAmount: number;
+  difference: number;
+}
+
+// ──────────────────────────────────────────────
 // Tax Savings
 // ──────────────────────────────────────────────
 

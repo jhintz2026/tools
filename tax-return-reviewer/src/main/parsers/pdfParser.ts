@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import { PDFParse } from 'pdf-parse';
 import { ParsedDocument, TaxFormType, TaxFormData, IncomeItem, DeductionItem, ScheduleEntry } from '../../shared/types';
+import { isCCHFormat, parseCCHData } from './cchParser';
 
 /**
  * Parses a PDF file and extracts structured tax data from IRS forms,
@@ -313,6 +314,15 @@ function extractFormData(text: string, formType: TaxFormType): TaxFormData {
       break;
   }
 
+  // ── CCH Access enhancement pass ──
+  // If the text is from CCH Access tax software, extract additional data
+  // from CCH-specific worksheets (Return Summary, per-property comparisons,
+  // depreciation reports, carryovers) which are more reliable than parsing
+  // the IRS form layouts from extracted PDF text.
+  if (isCCHFormat(text)) {
+    parseCCHData(text, data);
+  }
+
   return data;
 }
 
@@ -330,6 +340,8 @@ function extractTaxYear(text: string): string | undefined {
 
 function extractName(text: string): string | undefined {
   const patterns = [
+    // CCH format: "Prepared for ... KEVIN M. ROSATO" or "Name(s) shown on return KEVIN M. ROSATO"
+    /(?:Prepared\s*for|Name\(?s?\)?\s*(?:shown\s*on|as\s*shown))[\s\S]{0,60}?([A-Z][A-Z\s.]+[A-Z])\s+\d{3}/i,
     /(?:Your\s*first\s*name|First\s*name\s*and\s*(?:middle\s*)?initial)[\s\S]{0,30}?([A-Z][a-zA-Z]+[\s,]+[A-Z][a-zA-Z]+)/i,
     /(?:Name|Taxpayer|Employee)[\s:]+([A-Z][a-zA-Z]+[\s,]+[A-Z][a-zA-Z]+)/i,
     /([A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+)\s+\d{3}[\-\s]?\d{2}[\-\s]?\d{4}/,
@@ -359,6 +371,10 @@ function extractAmount(text: string, ...patterns: RegExp[]): number | undefined 
       if (raw.startsWith('(') && raw.endsWith(')')) {
         raw = '-' + raw.slice(1, -1);
       }
+      // Handle CCH trailing period format (e.g., "124695.")
+      if (raw.endsWith('.')) {
+        raw = raw.slice(0, -1);
+      }
       const num = parseFloat(raw);
       if (!isNaN(num) && num !== 0) return num;
     }
@@ -387,6 +403,10 @@ function extractByLineNumber(sectionText: string, lineNum: string): number | und
         let raw = amtMatch[0].replace(/[$,\s]/g, '');
         if (raw.startsWith('(') && raw.endsWith(')')) {
           raw = '-' + raw.slice(1, -1);
+        }
+        // Handle CCH trailing period format
+        if (raw.endsWith('.')) {
+          raw = raw.slice(0, -1);
         }
         const num = parseFloat(raw);
         if (!isNaN(num) && Math.abs(num) >= 1) {
@@ -1349,5 +1369,7 @@ function calculateConfidence(text: string, formType: TaxFormType): number {
   if (/(?:Box|Line)\s*\d/.test(text)) confidence += 0.1;
   if (/\$[\d,]+\.?\d*/.test(text)) confidence += 0.1;
   if (/(?:Department\s*of\s*the\s*Treasury|Internal\s*Revenue\s*Service|IRS)/i.test(text)) confidence += 0.1;
+  // CCH Access output is highly structured and reliable
+  if (isCCHFormat(text)) confidence = Math.max(confidence, 0.95);
   return Math.min(confidence, 1.0);
 }

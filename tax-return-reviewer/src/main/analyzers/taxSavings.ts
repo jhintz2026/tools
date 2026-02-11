@@ -87,7 +87,7 @@ function checkRetirementContributions(
       category: 'Retirement',
       title: 'Traditional/Roth IRA Contribution',
       description: 'No IRA contribution detected. Contributing up to $7,000 ($8,000 if age 50+) to a Traditional IRA may be tax-deductible, or a Roth IRA provides tax-free growth. Contributions can be made until the tax filing deadline.',
-      estimatedSavings: Math.min(7000, agi) * 0.22,
+      estimatedSavings: Math.min(7000, agi) * 0.24,
       applicability: 'likely',
       irsReference: 'Publication 590-A',
       requirements: ['Must have earned income', 'Traditional IRA deduction phases out at higher AGI if covered by employer plan'],
@@ -99,7 +99,7 @@ function checkRetirementContributions(
       id: 'sep_ira',
       category: 'Retirement',
       title: 'SEP-IRA or Solo 401(k) Contribution',
-      description: 'Self-employment income detected. A SEP-IRA allows contributions up to 25% of net self-employment income (max $69,000). A Solo 401(k) allows even higher contributions with an employee deferral component.',
+      description: 'Self-employment income detected. A SEP-IRA allows contributions up to 25% of net self-employment income (max $70,000 for 2025). A Solo 401(k) allows even higher contributions with an employee deferral component ($23,500 + 25% employer match).',
       estimatedSavings: undefined,
       applicability: 'likely',
       irsReference: 'Publication 560',
@@ -116,8 +116,8 @@ function checkHSA(data: TaxFormData, deductions: Set<string>, suggestions: TaxSa
       id: 'hsa_contribution',
       category: 'Health Savings',
       title: 'Health Savings Account (HSA) Contribution',
-      description: 'No HSA contribution detected. If enrolled in a High Deductible Health Plan, you can contribute up to $4,150 (individual) or $8,300 (family) tax-deductible, with tax-free growth and withdrawals for medical expenses.',
-      estimatedSavings: 4150 * 0.22,
+      description: 'No HSA contribution detected. If enrolled in a High Deductible Health Plan, you can contribute up to $4,300 (individual) or $8,550 (family) for 2025, tax-deductible, with tax-free growth and withdrawals for medical expenses.',
+      estimatedSavings: 4300 * 0.24,
       applicability: 'possible',
       irsReference: 'Publication 969',
       requirements: ['Must be enrolled in a High Deductible Health Plan (HDHP)', 'Cannot be enrolled in Medicare'],
@@ -137,7 +137,7 @@ function checkBusinessDeductions(
         id: 'vehicle_deduction',
         category: 'Business Expenses',
         title: 'Vehicle/Mileage Deduction',
-        description: `No vehicle expenses on Schedule C${schC.businessName ? ' (' + schC.businessName + ')' : ''}. If you use a vehicle for business, you may deduct actual expenses or the standard mileage rate ($0.67/mile for 2024).`,
+        description: `No vehicle expenses on Schedule C${schC.businessName ? ' (' + schC.businessName + ')' : ''}. If you use a vehicle for business, you may deduct actual expenses or the standard mileage rate ($0.70/mile for 2025).`,
         applicability: 'possible',
         irsReference: 'Publication 463',
         requirements: ['Must track mileage or actual expenses', 'Must have business use of vehicle'],
@@ -162,7 +162,7 @@ function checkBusinessDeductions(
         id: 'depreciation',
         category: 'Business Expenses',
         title: 'Depreciation / Section 179 Deduction',
-        description: 'No depreciation claimed. Business equipment, furniture, computers, and other assets may be depreciated or fully expensed under Section 179 (up to $1,220,000) or bonus depreciation.',
+        description: 'No depreciation claimed. Business equipment, furniture, computers, and other assets may be depreciated or fully expensed under Section 179 (up to $1,250,000 for 2025) or bonus depreciation (40% for 2025).',
         applicability: 'possible',
         irsReference: 'Publication 946',
         requirements: ['Must have business assets placed in service during the tax year'],
@@ -203,13 +203,14 @@ function checkBusinessDeductions(
 function checkRentalDeductions(data: TaxFormData, scheduleEs: any[], suggestions: TaxSavingsSuggestion[]): void {
   for (const schE of scheduleEs) {
     const expenses = schE.expenses || {};
+    const propName = schE.propertyLabel || schE.propertyAddress || schE.businessName || '';
 
     if (!expenses['Depreciation']) {
       suggestions.push({
-        id: 'rental_depreciation',
+        id: `rental_depreciation_${propName}`,
         category: 'Rental Property',
-        title: 'Rental Property Depreciation',
-        description: 'No depreciation on Schedule E. Residential rental property must be depreciated over 27.5 years. This is a non-cash deduction that reduces taxable rental income.',
+        title: `Rental Property Depreciation${propName ? ' - ' + propName : ''}`,
+        description: `No depreciation on Schedule E${propName ? ' for ' + propName : ''}. Residential rental property must be depreciated over 27.5 years. This is a non-cash deduction that reduces taxable rental income.`,
         applicability: 'likely',
         irsReference: 'Publication 527',
         requirements: ['Must own the rental property', 'Depreciation begins when property is placed in service'],
@@ -218,12 +219,55 @@ function checkRentalDeductions(data: TaxFormData, scheduleEs: any[], suggestions
 
     if (!expenses['Repairs'] && !expenses['Cleaning and maintenance']) {
       suggestions.push({
-        id: 'rental_repairs',
+        id: `rental_repairs_${propName}`,
         category: 'Rental Property',
-        title: 'Rental Repairs and Maintenance',
-        description: 'No repair/maintenance expenses on Schedule E. Routine repairs, cleaning between tenants, and maintenance are fully deductible in the year incurred.',
+        title: `Rental Repairs and Maintenance${propName ? ' - ' + propName : ''}`,
+        description: `No repair/maintenance expenses on Schedule E${propName ? ' for ' + propName : ''}. Routine repairs, cleaning between tenants, and maintenance are fully deductible in the year incurred.`,
         applicability: 'possible',
         irsReference: 'Publication 527',
+      });
+    }
+
+    // Check for high personal use days (limits deductions)
+    const netLoss = schE.netIncome || 0;
+    if (netLoss < -25000) {
+      suggestions.push({
+        id: `rental_passive_loss_${propName}`,
+        category: 'Rental Property',
+        title: `Large Rental Loss${propName ? ' - ' + propName : ''}`,
+        description: `This property shows a net loss of $${Math.abs(netLoss).toLocaleString()}. Passive activity loss rules may limit the deductible amount. Active participation allows up to $25,000 in rental losses ($12,500 for MFS). Remaining losses carry forward. Consider whether a cost segregation study could accelerate depreciation.`,
+        applicability: 'investigate',
+        irsReference: 'Form 8582, Publication 925',
+        requirements: ['Must actively participate in rental activity', 'AGI phase-out begins at $100,000'],
+      });
+    }
+
+    // Check for missing management fees on properties with significant expenses
+    const totalExp = schE.totalExpenses || 0;
+    if (totalExp > 10000 && !expenses['Management fees']) {
+      suggestions.push({
+        id: `rental_mgmt_fees_${propName}`,
+        category: 'Rental Property',
+        title: `Property Management Fees${propName ? ' - ' + propName : ''}`,
+        description: `No management fees deducted${propName ? ' for ' + propName : ''}. If you use a property manager or management company, their fees are deductible on Schedule E.`,
+        applicability: 'possible',
+        irsReference: 'Publication 527',
+      });
+    }
+  }
+
+  // Cost segregation study suggestion for multiple properties
+  if (scheduleEs.length >= 2) {
+    const totalDepreciation = scheduleEs.reduce((sum: number, e: any) => sum + (e.expenses?.['Depreciation'] || 0), 0);
+    if (totalDepreciation > 10000) {
+      suggestions.push({
+        id: 'cost_segregation',
+        category: 'Rental Property',
+        title: 'Cost Segregation Study',
+        description: `With ${scheduleEs.length} rental properties and $${totalDepreciation.toLocaleString()} in current depreciation, a cost segregation study could reclassify components (appliances, flooring, landscaping) to shorter depreciation lives (5, 7, or 15 years vs 27.5), potentially accelerating deductions significantly.`,
+        applicability: 'investigate',
+        irsReference: 'Publication 946',
+        requirements: ['Properties must have building value of $250,000+ for cost-effectiveness', 'Study must be performed by qualified professional'],
       });
     }
   }
@@ -322,15 +366,15 @@ function checkDependentCredits(data: TaxFormData, suggestions: TaxSavingsSuggest
   }
 
   const agi = data.totals?.adjustedGrossIncome || 0;
-  if (!hasEITC && agi < 63398) {
+  if (!hasEITC && agi < 66819) {
     suggestions.push({
       id: 'eitc',
       category: 'Credits',
       title: 'Earned Income Tax Credit (EITC)',
-      description: 'No EITC detected. Based on the AGI, you may qualify for the Earned Income Tax Credit, worth up to $7,430 with 3+ children. This is a refundable credit.',
+      description: 'No EITC detected. Based on the AGI, you may qualify for the Earned Income Tax Credit, worth up to $7,830 with 3+ children for 2025. This is a refundable credit.',
       applicability: 'investigate',
       irsReference: 'Publication 596, Schedule EIC',
-      requirements: ['Must have earned income', 'AGI limits apply based on filing status and number of children', 'Investment income must be $11,000 or less'],
+      requirements: ['Must have earned income', 'AGI limits apply based on filing status and number of children', 'Investment income must be $11,600 or less', 'Not available for Married Filing Separately'],
     });
   }
 }
