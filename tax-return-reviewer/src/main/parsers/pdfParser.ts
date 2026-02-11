@@ -33,6 +33,25 @@ export async function parsePDF(filePath: string): Promise<ParsedDocument> {
   const formType = detectFormType(text);
   const extracted = extractFormData(text, formType);
 
+  // Debug summary
+  const schEEntries = extracted.scheduleEntries.filter(s => s.scheduleType === 'E');
+  const schBItems = extracted.incomeItems.filter(i => i.type === 'interest' || i.type === 'dividends');
+  console.log(`[Parser] === PARSE SUMMARY for ${filePath} ===`);
+  console.log(`[Parser] Form type: ${formType}, Pages: ${pageCount}, CCH format: ${isCCHFormat(text)}`);
+  console.log(`[Parser] Income items: ${extracted.incomeItems.length}, Deduction items: ${extracted.deductionItems.length}`);
+  console.log(`[Parser] Schedule E entries: ${schEEntries.length}`);
+  for (const e of schEEntries) {
+    console.log(`[Parser]   ${e.propertyLabel}: Rents=${e.grossIncome}, Expenses=${e.totalExpenses}, Net=${e.netIncome}, Address=${e.propertyAddress || '(none)'}`);
+  }
+  console.log(`[Parser] Schedule B/Interest items: ${schBItems.length}`);
+  console.log(`[Parser] AGI: ${extracted.totals.adjustedGrossIncome}, Taxable: ${extracted.totals.taxableIncome}`);
+  if (extracted.totals.twoYearComparison) {
+    console.log(`[Parser] Two-Year Comparison items: ${extracted.totals.twoYearComparison.length}`);
+  }
+  if (extracted.totals.priorYearComparison) {
+    console.log(`[Parser] Prior year data:`, JSON.stringify(extracted.totals.priorYearComparison));
+  }
+
   return {
     sourceFile: filePath,
     rawText: text,
@@ -223,7 +242,10 @@ function extractFormData(text: string, formType: TaxFormType): TaxFormData {
       }
 
       // Extract Schedule E with per-property breakdown
+      console.log(`[Parser] Schedule E sections detected: ${sections.scheduleE.length}`);
+      console.log(`[Parser] Schedule B section detected: ${sections.scheduleB ? 'YES (' + sections.scheduleB.length + ' chars)' : 'NO'}`);
       for (let i = 0; i < sections.scheduleE.length; i++) {
+        console.log(`[Parser] Schedule E section ${i}: ${sections.scheduleE[i].substring(0, 100)}...`);
         extractScheduleEData(sections.scheduleE[i], data);
       }
 
@@ -725,6 +747,7 @@ function extractScheduleCData(sectionText: string, data: TaxFormData, schIndex: 
  * Each property gets its own ScheduleEntry.
  */
 function extractScheduleEData(sectionText: string, data: TaxFormData): void {
+  console.log(`[Schedule E] Extracting from section (${sectionText.length} chars, ${sectionText.split(/\n/).length} lines)`);
   // Try to find individual property addresses from line 1a/1b area
   // Schedule E lists properties A, B, C at lines 1a, 1b, 1c with physical addresses
   // Tax software formats: "A 123 Main St, City, ST 12345" or "1a  A  123 Main St..."
@@ -815,6 +838,7 @@ function extractScheduleEData(sectionText: string, data: TaxFormData): void {
   }
 
   const detectedProperties = Object.keys(propertyAddresses);
+  console.log(`[Schedule E] Detected ${detectedProperties.length} properties:`, JSON.stringify(propertyAddresses));
 
   // Try to extract per-property data from columnar layout
   // Tax software often formats columns as: "3  Rents received   12000   15000   18000"

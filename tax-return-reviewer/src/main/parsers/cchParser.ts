@@ -91,12 +91,25 @@ export function parseCCHData(text: string, data: TaxFormData): void {
     }
 
     // Overall Two-Year Comparison Worksheet
-    if (/Two-Year Comparison Worksheet/i.test(trimmed) && /Wages.*salaries/i.test(trimmed) && !/Schedule E/i.test(trimmed)) {
+    if (/Two[- ]Year Comparison/i.test(trimmed) && /Wages.*salaries/i.test(trimmed) && !/Schedule E/i.test(trimmed)) {
       parseCCHTwoYearComparison(trimmed, data, twoYearComparison);
     }
 
     // Schedule E per-property Two-Year Comparison
-    if (/Two-Year Comparison/i.test(trimmed) && /Rents received/i.test(trimmed) && /Property Name/i.test(trimmed)) {
+    // Detect pages that have rental property comparison data — accept multiple format variants
+    const hasTwoYearHeader = /Two[- ]Year Comparison/i.test(trimmed);
+    const hasRents = /Rents?\s*received/i.test(trimmed);
+    const hasPropertyName = /Property\s*(?:Name|Address)/i.test(trimmed);
+    const hasRentalKeywords = /(?:RENTAL\s*REAL\s*ESTATE|RESIDENTIAL\s*RENTAL)/i.test(trimmed);
+    const hasScheduleERef = /Schedule\s*E/i.test(trimmed);
+    const hasTotalExpenses = /Total\s*expenses/i.test(trimmed);
+
+    if (hasTwoYearHeader && hasRents && (hasPropertyName || hasRentalKeywords)) {
+      console.log('[CCH] Found Schedule E comparison page (primary detection)');
+      parseCCHScheduleEComparison(trimmed, scheduleEProperties);
+    } else if (hasRents && hasTotalExpenses && hasScheduleERef && (hasPropertyName || hasRentalKeywords)) {
+      // Fallback: page has Schedule E rental data but not formatted as "Two-Year Comparison"
+      console.log('[CCH] Found Schedule E comparison page (fallback detection)');
       parseCCHScheduleEComparison(trimmed, scheduleEProperties);
     }
 
@@ -159,6 +172,16 @@ export function parseCCHData(text: string, data: TaxFormData): void {
       });
     }
   }
+
+  // Log what was found for debugging
+  console.log(`[CCH] Total pages scanned: ${pages.length}`);
+  console.log(`[CCH] Schedule E properties found: ${scheduleEProperties.length}`);
+  for (const prop of scheduleEProperties) {
+    console.log(`[CCH]   ${prop.propertyLabel}: ${prop.propertyAddress || '(no address)'} - Rents: ${prop.grossIncome}, Expenses: ${prop.totalExpenses}, Net: ${prop.netIncome}`);
+  }
+  console.log(`[CCH] Two-Year Comparison items: ${twoYearComparison.length}`);
+  console.log(`[CCH] Depreciation assets: ${depreciationAssets.length}`);
+  console.log(`[CCH] Carryovers: ${carryovers.length}`);
 
   // Replace or supplement Schedule E entries if CCH comparison worksheets provided better data
   if (scheduleEProperties.length > 0) {
@@ -413,10 +436,14 @@ function parseCCHScheduleEComparison(
   pageText: string,
   scheduleEProperties: ScheduleEntry[]
 ): void {
-  // Extract property name/address
+  // Extract property name/address — try multiple CCH format variants
   // "Property Name: RENTAL REAL ESTATE-25014 E 93RD CT - 25014 E 93RD CT S, BROK"
-  const propNameMatch = pageText.match(/Property Name:\s*(.+?)(?:\s{2,}|\n)/i);
+  // "Property Address: 25014 E 93RD CT S"
+  // "RENTAL REAL ESTATE-25014 E 93RD CT"
+  const propNameMatch = pageText.match(/Property\s*(?:Name|Address)\s*:\s*(.+?)(?:\s{2,}|\n)/i)
+    || pageText.match(/((?:RENTAL|RESIDENTIAL)\s+(?:REAL\s+ESTATE|RENTAL\s+REAL\s+ESTATE)[^-]*-\s*[^\n]+)/i);
   let propertyName = propNameMatch?.[1]?.trim() || '';
+  console.log('[CCH Schedule E] Property name extracted:', propertyName || '(none)');
   let propertyAddress = '';
 
   // Try to extract the actual address from the property name
