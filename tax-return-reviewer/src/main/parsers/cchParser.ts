@@ -40,7 +40,11 @@ function parseCCHAmount(raw: string): number {
 /** Extract amount from a line by label in CCH format */
 function extractCCHLabelAmount(text: string, label: string): number | undefined {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(escaped + '[\\s\\t.:~_\\-]*\\(?\\$?\\s?([\\d,]+\\.?\\d*)\\)?', 'i');
+  // IMPORTANT: Don't include `-` in the separator character class — it would eat
+  // the negative sign before amounts like "-25,115." and "-15,750."
+  // Capture the full amount token including optional parens/negative sign so
+  // parseCCHAmount() can interpret it correctly.
+  const pattern = new RegExp(escaped + '[\\s\\t.:~_]*(\\(?-?\\$?\\s?[\\d,]+\\.?\\d*\\)?)', 'i');
   const match = text.match(pattern);
   if (match) {
     return parseCCHAmount(match[1]);
@@ -109,6 +113,50 @@ export function parseCCHData(text: string, data: TaxFormData): void {
     // Direct Deposit/Debit Report
     if (/Direct Deposit.*Report/i.test(trimmed)) {
       parseCCHDepositInfo(trimmed, data);
+    }
+  }
+
+  // ── Create income/deduction items from Two-Year Comparison data ──
+  // The Two-Year Comparison is the most reliable source for top-level 1040 amounts
+  // in CCH output. Replace any wrong items that the base parser may have picked up
+  // from CCH form template lines (e.g., "1a 1b 1c ... 11a" rows).
+  if (twoYearComparison.length > 0) {
+    // Clear base-parser income items that may have wrong values from CCH template lines
+    data.incomeItems = data.incomeItems.filter(i =>
+      !['wages', 'interest', 'dividends', 'ira', 'pension', 'social_security', 'capital_gains', 'business'].includes(i.type)
+    );
+    // Clear base-parser deductions that came from extract1040Data
+    data.deductionItems = data.deductionItems.filter(d =>
+      !['standard_deduction', 'qbi'].includes(d.type)
+    );
+
+    // Map Two-Year Comparison labels to income items
+    const tycMap: Record<string, { type: string; description: string; formSource: string }> = {
+      'Wages, salaries, and tips': { type: 'wages', description: 'Wages, salaries, tips', formSource: 'Form 1040 Line 1a' },
+      'Schedule B - taxable interest': { type: 'interest', description: 'Taxable interest', formSource: 'Form 1040 Line 2b' },
+      'Taxable IRA distributions': { type: 'ira', description: 'IRA distributions (taxable)', formSource: 'Form 1040 Line 4b' },
+    };
+
+    for (const item of twoYearComparison) {
+      const mapping = tycMap[item.description];
+      if (mapping && item.currentYearAmount > 0) {
+        data.incomeItems.push({
+          type: mapping.type,
+          description: mapping.description,
+          amount: item.currentYearAmount,
+          formSource: mapping.formSource,
+        });
+      }
+    }
+
+    // Use Return Summary totals (already set by parseCCHReturnSummary) for deduction
+    if (data.totals.standardOrItemizedDeduction) {
+      data.deductionItems.push({
+        type: 'standard_deduction',
+        description: 'Standard/Itemized deduction',
+        amount: data.totals.standardOrItemizedDeduction,
+        formSource: 'Form 1040 Line 12',
+      });
     }
   }
 

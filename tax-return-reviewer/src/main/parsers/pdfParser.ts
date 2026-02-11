@@ -207,9 +207,15 @@ function extractFormData(text: string, formType: TaxFormType): TaxFormData {
       // Split text into form sections to prevent line-number cross-contamination
       const sections = splitTextByFormSection(text);
 
-      // Extract 1040 data from the 1040 section only
-      const text1040 = sections.form1040 || text;
-      extract1040Data(text1040, data);
+      // Skip extract1040Data for CCH format — CCH PDFs contain form template lines
+      // like "1a 1b 1c 1d 1e 1f 1g 1h 1z 2b 3b 4b 5b 6b 7a 8 9 10 11a" that cause
+      // extractByLineNumber() to pick up wrong values (e.g., "11" from "11a" as wages).
+      // The CCH parser (parseCCHData) extracts reliable data from the Return Summary
+      // and Two-Year Comparison worksheets instead.
+      if (!isCCHFormat(text)) {
+        const text1040 = sections.form1040 || text;
+        extract1040Data(text1040, data);
+      }
 
       // Extract each Schedule C separately
       for (let i = 0; i < sections.scheduleC.length; i++) {
